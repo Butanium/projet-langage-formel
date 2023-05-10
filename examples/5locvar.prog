@@ -1,0 +1,15 @@
+// oui
+var f0,f1,v,c,ga;
+// ça marche
+proc p0
+// bien sur
+    var todo;
+    skip; // of course
+    do
+    :: f0 -> skip
+    :: f1 -> do 
+        :: v -> skip
+        :: else -> break
+        od
+    od
+end
