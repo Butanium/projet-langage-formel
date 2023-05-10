@@ -28,9 +28,16 @@ typedef struct varlist	// variable reference (used for print statement)
 	struct varlist *next;
 } varlist;
 
+typedef struct proclist
+{
+	struct stmt *body;
+	struct proclist *next;
+	char *name;
+} proclist;
+
 typedef struct expr	// boolean expression
 {
-	int type;	// TRUE, FALSE, OR, AND, NOT, 0 (variable)
+	int type;	// INT, OR, AND, NOT, 0 (variable)
 	var *var;
 	struct expr *left, *right;
 } expr;
@@ -48,7 +55,7 @@ typedef struct stmt	// command
 /* All data pertaining to the programme are accessible from these two vars. */
 
 var *program_vars;
-stmt *program_stmts;
+proclist *program_procs = NULL;
 
 /****************************************************************************/
 /* Functions for setting up data structures at parse time.                 */
@@ -61,6 +68,7 @@ var* make_ident (char *s)
 	v->next = NULL;
 	return v;
 }
+
 
 var* find_ident (char *s)
 {
@@ -79,6 +87,15 @@ varlist* make_varlist (char *s)
 	return l;
 }
 
+proclist* make_proclist (stmt *s, char *name)
+{
+	proclist *p = malloc(sizeof(proclist));
+	p->body = s;
+	p->name = name;
+	p->next = program_procs;
+	program_procs = p;
+}
+
 expr* make_expr (int type, var *var, expr *left, expr *right)
 {
 	expr *e = malloc(sizeof(expr));
@@ -87,6 +104,15 @@ expr* make_expr (int type, var *var, expr *left, expr *right)
 	e->left = left;
 	e->right = right;
 	return e;
+}
+
+expr* make_const(int type, int n)
+{
+	var *v = malloc(sizeof(var));
+	v->name = NULL;
+	v->value = n;
+	v->next = NULL;
+	return make_expr(type, v, NULL, NULL);
 }
 
 stmt* make_stmt (int type, var *var, expr *expr,
@@ -115,45 +141,52 @@ stmt* make_stmt (int type, var *var, expr *expr,
 	varlist *l;
 	expr *e;
 	stmt *s;
+	int n;
 }
 
 %type <v> declist
 %type <l> varlist
 %type <e> expr
-%type <s> stmt assign
+%type <s> stmt assign guardlist
 
-%token BOOL WHILE DO OD ASSIGN IF ELSE FI PRINT OR AND XOR EQUAL NOT TRUE FALSE GUARD ARROW BREAK
+%token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR
 %token <i> IDENT
+%token <n> INT
 
 %left ';'
 %left OR XOR
 %left AND
+%left MUL
+%left ADD SUB
 %right NOT EQUAL
 
 %%
 
-prog	: bools stmt	{ program_stmts = $2; }
+prog	: vars proclist	
+proc : PROC IDENT stmt END { make_proclist($3, $2); }
+proclist: 
+	 proc proclist 
+	| proc
 
-bools	: BOOL declist ';'	{ program_vars = $2; }
+vars	: VAR declist ';'	{ program_vars = $2; }
 
 declist	: IDENT			{ $$ = make_ident($1); }
 	| declist ',' IDENT	{ ($$ = make_ident($3))->next = $1; }
 
 stmt	: assign
+	// TODO: allow local variables
 	| stmt ';' stmt	
 		{ $$ = make_stmt(';',NULL,NULL,$1,$3,NULL); }
-	| WHILE expr DO stmt OD
-		{ $$ = make_stmt(WHILE,NULL,$2,$4,NULL,NULL); }
-	| IF expr THEN stmt ELSE stmt FI
-		{ $$ = make_stmt(IF,NULL,$2,$4,$6,NULL); }
-	| IF expr THEN stmt FI
-		{ $$ = make_stmt(IF,NULL,$2,$4,NULL,NULL); }
+	| DO guardlist OD
+		{ $$ = make_stmt(DO,NULL, NULL,$2,NULL,NULL); }
+	| IF guardlist FI { $$ = make_stmt(IF,NULL,NULL,$2,NULL,NULL); }
 	| PRINT varlist
 		{ $$ = make_stmt(PRINT,NULL,NULL,NULL,NULL,$2); }
-/* (int type, var *var, expr *expr,
-			stmt *left, stmt *right, varlist *list)*/
+	| SKIP { $$ = make_stmt(SKIP, NULL, NULL, NULL, NULL, NULL); }
+	| BREAK { $$ = make_stmt(BREAK, NULL, NULL, NULL, NULL, NULL); }
+
 guardlist : 
-	| GUARD expr ARROW stmt guardlist
+	 GUARD expr ARROW stmt guardlist
 		{ $$ = make_stmt(GUARD,NULL, $2, $4, $5, NULL); }
 	| GUARD expr ARROW stmt
 		{ $$ = make_stmt(GUARD,NULL, $2, $4, NULL, NULL); }
@@ -170,11 +203,12 @@ expr	: IDENT		{ $$ = make_expr(0,find_ident($1),NULL,NULL); }
 	| expr AND expr	{ $$ = make_expr(AND,NULL,$1,$3); }
 	| expr EQUAL expr {$$ = make_expr(EQUAL, NULL, $1, $3);}
 	| NOT expr	{ $$ = make_expr(NOT,NULL,$2,NULL); }
-	| TRUE		{ $$ = make_expr(TRUE,NULL,NULL,NULL); }
-	| FALSE		{ $$ = make_expr(FALSE,NULL,NULL,NULL); }
 	| '(' expr ')'	{ $$ = $2; }
 	| ELSE { $$ = make_expr(ELSE, NULL, NULL, NULL); }
-
+	| expr ADD expr { $$ = make_expr(ADD, NULL, $1, $3); }
+	| expr SUB expr { $$ = make_expr(SUB, NULL, $1, $3); }
+	| expr MUL expr { $$ = make_expr(MUL, NULL, $1, $3); }
+	| INT {$$ = make_const(INT, $1);}
 %%
 
 #include "langlex.c"
@@ -186,13 +220,15 @@ int eval (expr *e)
 {
 	switch (e->type)
 	{
-		case TRUE: return 1;
-		case FALSE: return 0;
-		case XOR: return eval(e->left) ^ eval(e->right);
 		case OR: return eval(e->left) || eval(e->right);
 		case AND: return eval(e->left) && eval(e->right);
 		case EQUAL: return eval(e->left) == eval(e->right);
 		case NOT: return !eval(e->left);
+		case ADD: return eval(e->left) + eval(e->right);
+		case SUB: return eval(e->left) - eval(e->right);
+		case MUL: return eval(e->left) * eval(e->right);
+		case ELSE: return 1; // todo: implement
+		case INT: return e->var->value;
 		case 0: return e->var->value;
 	}
 }
@@ -204,33 +240,40 @@ void print_vars (varlist *l)
 	printf("%s = %c  ", l->var->name, l->var->value? 'T' : 'F');
 }
 
-void execute (stmt *s)
+
+int execute (stmt *s)
 {
 	switch(s->type)
 	{
 		case ASSIGN:
 			s->var->value = eval(s->expr);
-			break;
+			return 0;
 		case ';':
-			execute(s->left);
-			execute(s->right);
-			break;
-		case WHILE:
-			while (eval(s->expr)) execute(s->left);
-			break;
+			if (execute(s->left)) return 1;
+			return execute(s->right);
+		case DO:
+			// todo change
+			while (eval(s->expr)) {
+				if (execute(s->left)) return 0;
+			}
+			return 0;
 		case IF:
-		// todo : refactor with guard list.
-		// Idea: if guards is fullfilled draw a random number.
-		// If another guard is fullfilled, it is executed only 
-		// if it's random number is greater
-			if (eval(s->expr)) execute(s->left);
-			else if (s->right) execute(s->right);
-			break;
+			execute(s->left);
 		case PRINT: 
 			print_vars(s->list);
 			puts("");
+			return 0;
 			break;
-
+		case SKIP:
+			return 0;
+		case BREAK:
+			return 1;
+		case GUARD:
+			if (eval(s->expr)) {
+				if (execute(s->left)) return 1;
+			} else {
+				return execute(s->right);
+			}
 	}
 }
 
@@ -240,5 +283,7 @@ int main (int argc, char **argv)
 {
 	if (argc <= 1) { yyerror("no file specified"); exit(1); }
 	yyin = fopen(argv[1],"r");
-	if (!yyparse()) execute(program_stmts);
+	if (!yyparse()) printf("parsing successful\n");
+	else exit(1);
+	// execute(program_stmts);
 }
