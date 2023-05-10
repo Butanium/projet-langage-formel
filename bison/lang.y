@@ -122,7 +122,7 @@ stmt* make_stmt (int type, var *var, expr *expr,
 %type <e> expr
 %type <s> stmt assign
 
-%token BOOL WHILE DO OD ASSIGN IF THEN ELSE FI PRINT OR AND XOR EQUAL NOT TRUE FALSE
+%token BOOL WHILE DO OD ASSIGN IF ELSE FI PRINT OR AND XOR EQUAL NOT TRUE FALSE GUARD ARROW BREAK
 %token <i> IDENT
 
 %left ';'
@@ -150,6 +150,13 @@ stmt	: assign
 		{ $$ = make_stmt(IF,NULL,$2,$4,NULL,NULL); }
 	| PRINT varlist
 		{ $$ = make_stmt(PRINT,NULL,NULL,NULL,NULL,$2); }
+/* (int type, var *var, expr *expr,
+			stmt *left, stmt *right, varlist *list)*/
+guardlist : 
+	| GUARD expr ARROW stmt guardlist
+		{ $$ = make_stmt(GUARD,NULL, $2, $4, $5, NULL); }
+	| GUARD expr ARROW stmt
+		{ $$ = make_stmt(GUARD,NULL, $2, $4, NULL, NULL); }
 
 assign	: IDENT ASSIGN expr
 		{ $$ = make_stmt(ASSIGN,find_ident($1),$3,NULL,NULL,NULL); }
@@ -166,6 +173,7 @@ expr	: IDENT		{ $$ = make_expr(0,find_ident($1),NULL,NULL); }
 	| TRUE		{ $$ = make_expr(TRUE,NULL,NULL,NULL); }
 	| FALSE		{ $$ = make_expr(FALSE,NULL,NULL,NULL); }
 	| '(' expr ')'	{ $$ = $2; }
+	| ELSE { $$ = make_expr(ELSE, NULL, NULL, NULL); }
 
 %%
 
@@ -211,6 +219,10 @@ void execute (stmt *s)
 			while (eval(s->expr)) execute(s->left);
 			break;
 		case IF:
+		// todo : refactor with guard list.
+		// Idea: if guards is fullfilled draw a random number.
+		// If another guard is fullfilled, it is executed only 
+		// if it's random number is greater
 			if (eval(s->expr)) execute(s->left);
 			else if (s->right) execute(s->right);
 			break;

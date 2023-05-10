@@ -6,15 +6,17 @@ DIG	[0-9]
 
 "bool"	{ return BOOL; }
 "while"	{ return WHILE; }
+"break"	{ return BREAK; }
 "do"	{ return DO; }
 "od"	{ return OD; }
 "if"	{ return IF; }
-"then"	{ return THEN; }
 "else"	{ return ELSE; }
 "fi"	{ return FI; }
 "print"	{ return PRINT; }
 "true"	{ return TRUE; }
 "false"	{ return FALSE; }
+"::" { return GUARD }
+"->" { return ARROW }
 
 ":="	{ return ASSIGN; }
 "^"	{ return XOR; }
