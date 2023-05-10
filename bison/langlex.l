@@ -15,6 +15,7 @@ DIG	[0-9]
 "print"	{ return PRINT; }
 "true"	{ return TRUE; }
 "false"	{ return FALSE; }
+"reach" { return REACH; }
 "::" { return GUARD }
 "->" { return ARROW }
 

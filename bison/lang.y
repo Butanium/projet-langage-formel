@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "hash.c"
+#include "crc32.c"
 
 int yylex();
 
@@ -44,11 +46,21 @@ typedef struct stmt	// command
 	varlist *list;
 } stmt;
 
+typedef struct spec
+{
+  int valid;
+  expr *expr;
+  struct spec *next;
+} spec;
+
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
 
 var *program_vars;
 stmt *program_stmts;
+spec *program_specs;
+
+wHash *hash;
 
 /****************************************************************************/
 /* Functions for setting up data structures at parse time.                 */
@@ -115,14 +127,16 @@ stmt* make_stmt (int type, var *var, expr *expr,
 	varlist *l;
 	expr *e;
 	stmt *s;
+  spec *sp;
 }
 
 %type <v> declist
 %type <l> varlist
 %type <e> expr
 %type <s> stmt assign
+%type <sp> spec
 
-%token BOOL WHILE DO OD ASSIGN IF ELSE FI PRINT OR AND XOR EQUAL NOT TRUE FALSE GUARD ARROW BREAK
+%token BOOL WHILE DO OD ASSIGN IF ELSE FI PRINT OR AND XOR EQUAL NOT TRUE FALSE REACH GUARD ARROW BREAK
 %token <i> IDENT
 
 %left ';'
@@ -150,6 +164,8 @@ stmt	: assign
 		{ $$ = make_stmt(IF,NULL,$2,$4,NULL,NULL); }
 	| PRINT varlist
 		{ $$ = make_stmt(PRINT,NULL,NULL,NULL,NULL,$2); }
+  | REACH expr
+    { $$ = make_stmt(REACH,NULL,$2,NULL,NULL,NULL); }
 /* (int type, var *var, expr *expr,
 			stmt *left, stmt *right, varlist *list)*/
 guardlist : 
@@ -174,6 +190,9 @@ expr	: IDENT		{ $$ = make_expr(0,find_ident($1),NULL,NULL); }
 	| FALSE		{ $$ = make_expr(FALSE,NULL,NULL,NULL); }
 	| '(' expr ')'	{ $$ = $2; }
 	| ELSE { $$ = make_expr(ELSE, NULL, NULL, NULL); }
+
+spec : { $$ = NULL; }
+  | REACH expr spec { $$ = $2; $$->next = $3; }
 
 %%
 
@@ -240,5 +259,9 @@ int main (int argc, char **argv)
 {
 	if (argc <= 1) { yyerror("no file specified"); exit(1); }
 	yyin = fopen(argv[1],"r");
-	if (!yyparse()) execute(program_stmts);
+  if (yyparse()) exit(1);
+
+  hash = wHashCreate(xcrc32)
+
+	execute(program_stmts);
 }
