@@ -1,0 +1,10 @@
+// oui
+var f0,f1,v,c,ga;
+// ça marche
+proc p0
+// bien sur
+    skip; // of course
+    do
+    :: f0 -> skip
+    od
+end

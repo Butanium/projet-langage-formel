@@ -1,0 +1,14 @@
+var f0,f1,v,c,ga;
+var again;
+proc p0
+    var todo;
+    again := 2;
+    f0 := 1;
+    do
+    :: f0 -> skip
+    :: f1 -> do 
+        :: v -> skip
+        :: else -> break
+        od
+    od
+end
