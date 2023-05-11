@@ -268,10 +268,7 @@ int execute (stmt *s)
 			if (execute(s->left)) return 1;
 			return execute(s->right);
 		case DO:
-			// todo change
-			while (eval(s->expr)) {
-				if (execute(s->left)) return 0;
-			}
+			while (execute(s->left) == 0);
 			return 0;
 		case IF:
 			execute(s->left);
