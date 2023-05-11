@@ -276,7 +276,6 @@ int execute (stmt *s)
 			print_vars(s->list);
 			puts("");
 			return 0;
-			break;
 		case SKIP:
 			return 0;
 		case BREAK:
