@@ -27,6 +27,8 @@ DIG	[0-9]
 "+" {return ADD;}
 "-" {return SUB;}
 "*" {return MUL;}
+">" {return GT;}
+"<" {return LT;}
 {DIG}+	{ yylval.n = atoi(yytext); return INT; }
 
 [a-z_][a-z0-9_]* { yylval.i = strdup(yytext); return IDENT; }

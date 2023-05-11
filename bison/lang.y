@@ -31,6 +31,7 @@ typedef struct varlist	// variable reference (used for print statement)
 typedef struct proclist
 {
 	struct stmt *body;
+	struct var *local_vars;
 	struct proclist *next;
 	char *name;
 } proclist;
@@ -54,7 +55,8 @@ typedef struct stmt	// command
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
 
-var *program_vars;
+var *global_vars;
+var *current_vars;
 proclist *program_procs = NULL;
 
 /****************************************************************************/
@@ -72,8 +74,12 @@ var* make_ident (char *s)
 
 var* find_ident (char *s)
 {
-	var *v = program_vars;
+	var *v = current_vars;
 	while (v && strcmp(v->name,s)) v = v->next;
+	if (!v) {
+		v = global_vars;
+		while (v && strcmp(v->name,s)) v = v->next;
+	}
 	if (!v) { yyerror("undeclared variable"); exit(1); }
 	return v;
 }
@@ -92,6 +98,8 @@ proclist* make_proclist (stmt *s, char *name)
 	proclist *p = malloc(sizeof(proclist));
 	p->body = s;
 	p->name = name;
+	p->local_vars = current_vars;
+	current_vars = NULL;
 	p->next = program_procs;
 	program_procs = p;
 }
@@ -149,7 +157,7 @@ stmt* make_stmt (int type, var *var, expr *expr,
 %type <e> expr
 %type <s> stmt assign guardlist
 
-%token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR
+%token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR GT LT
 %token <i> IDENT
 %token <n> INT
 
@@ -162,13 +170,19 @@ stmt* make_stmt (int type, var *var, expr *expr,
 
 %%
 
-prog	: vars proclist	
-proc : PROC IDENT stmt END { make_proclist($3, $2); }
+prog	: global_vars  proclist	
+proc : PROC IDENT local_vars stmt END { make_proclist($4, $2);}
 proclist: 
 	 proc proclist 
 	| proc
 
-vars	: VAR declist ';'	{ program_vars = $2; }
+local_vars: 
+| VAR declist ';' { current_vars = $2; }
+
+global_vars	: 
+	VAR declist ';'	{ global_vars = $2; }
+	| VAR declist ';' global_vars
+		{ global_vars->next = $2; }
 
 declist	: IDENT			{ $$ = make_ident($1); }
 	| declist ',' IDENT	{ ($$ = make_ident($3))->next = $1; }
@@ -192,7 +206,7 @@ guardlist :
 		{ $$ = make_stmt(GUARD,NULL, $2, $4, NULL, NULL); }
 
 assign	: IDENT ASSIGN expr
-		{ $$ = make_stmt(ASSIGN,find_ident($1),$3,NULL,NULL,NULL); }
+		{ $$ = make_stmt(ASSIGN, find_ident($1),$3,NULL,NULL,NULL); }
 
 varlist	: IDENT			{ $$ = make_varlist($1); }
 	| varlist ',' IDENT	{ ($$ = make_varlist($3))->next = $1; }
@@ -208,6 +222,8 @@ expr	: IDENT		{ $$ = make_expr(0,find_ident($1),NULL,NULL); }
 	| expr ADD expr { $$ = make_expr(ADD, NULL, $1, $3); }
 	| expr SUB expr { $$ = make_expr(SUB, NULL, $1, $3); }
 	| expr MUL expr { $$ = make_expr(MUL, NULL, $1, $3); }
+	| expr GT expr { $$ = make_expr(GT, NULL, $1, $3); }
+	| expr LT expr { $$ = make_expr(LT, NULL, $1, $3); }
 	| INT {$$ = make_const(INT, $1);}
 %%
 
@@ -237,7 +253,7 @@ void print_vars (varlist *l)
 {
 	if (!l) return;
 	print_vars(l->next);
-	printf("%s = %c  ", l->var->name, l->var->value? 'T' : 'F');
+	printf("%s = %d  ", l->var->name, l->var->value);
 }
 
 

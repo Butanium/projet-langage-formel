@@ -1,11 +1,9 @@
-// oui
 var f0,f1,v,c,ga;
-// ça marche
+var again;
 proc p0
-// bien sur
     var todo;
-    todo := 1;
-    skip; // of course
+    again := 2;
+    f0 := 1;
     do
     :: f0 -> skip
     :: f1 -> do 
