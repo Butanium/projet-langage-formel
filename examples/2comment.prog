@@ -5,3 +5,6 @@ proc p0
 // bien sur
     skip // of course
 end
+
+reach c == 3
+reach v == 2

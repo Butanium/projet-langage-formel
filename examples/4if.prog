@@ -12,3 +12,5 @@ proc p0
         od
     od
 end
+
+reach f0 == f1

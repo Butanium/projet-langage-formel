@@ -14,3 +14,6 @@ proc p0
         od
     od
 end
+
+reach v == c
+reach v == ga
