@@ -3,3 +3,5 @@ var f0,f1,v,c,ga;
 proc p0
     skip
 end
+
+reach c == 3

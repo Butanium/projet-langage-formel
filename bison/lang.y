@@ -54,12 +54,12 @@ typedef struct stmt	// command
 	varlist *list;
 } stmt;
 
-typedef struct spec
+typedef struct speclist
 {
   int valid;
   expr *expr;
-  struct spec *next;
-} spec;
+  struct speclist *next;
+} speclist;
 
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
@@ -67,7 +67,7 @@ typedef struct spec
 var *global_vars;
 var *current_vars;
 proclist *program_procs = NULL;
-spec *program_specs;
+speclist *program_specs;
 
 wHash *hash;
 
@@ -117,6 +117,15 @@ proclist* make_proclist (stmt *s, char *name)
 	program_procs = p;
 }
 
+speclist* make_speclist (expr *exp, speclist* next)
+{
+  speclist *s = malloc(sizeof(speclist));
+  s->valid = 0;
+  s->expr = exp;
+  s->next = next;
+  return s;
+}
+
 expr* make_expr (int type, var *var, expr *left, expr *right)
 {
 	expr *e = malloc(sizeof(expr));
@@ -162,15 +171,15 @@ stmt* make_stmt (int type, var *var, expr *expr,
 	varlist *l;
 	expr *e;
 	stmt *s;
-  spec *sp;
 	int n;
+  speclist *spec;
 }
 
 %type <v> declist
 %type <l> varlist
 %type <e> expr
-%type <sp> spec
 %type <s> stmt assign guardlist
+%type <spec> speclist
 
 %token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT REACH GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR GT LT
 %token <i> IDENT
@@ -185,7 +194,7 @@ stmt* make_stmt (int type, var *var, expr *expr,
 
 %%
 
-prog	: global_vars  proclist	
+prog	: global_vars  proclist	speclist { program_specs = $3; }
 proc : PROC IDENT local_vars stmt END { make_proclist($4, $2);}
 proclist: 
 	 proc proclist 
@@ -245,8 +254,8 @@ expr	: IDENT		{ $$ = make_expr(0,find_ident($1),NULL,NULL); }
 	| expr LT expr { $$ = make_expr(LT, NULL, $1, $3); }
 	| INT {$$ = make_const(INT, $1);}
 
-spec : { $$ = NULL; }
-  | REACH expr spec { $$ = $2; $$->next = $3; }
+speclist : { $$ = NULL; }
+  | REACH expr speclist { $$ = make_speclist($2, $3); }
 
 %%
 
@@ -318,7 +327,9 @@ int main (int argc, char **argv)
 {
 	if (argc <= 1) { yyerror("no file specified"); exit(1); }
 	yyin = fopen(argv[1],"r");
-  hash = wHashCreate(xcrc32)
+
+  //hash = wHashCreate(xcrc32)
+
 	if (!yyparse()) printf("parsing successful\n");
 	else exit(1);
 	// execute(program_stmts);
