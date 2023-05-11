@@ -321,6 +321,22 @@ int execute (stmt *s)
 	}
 }
 
+
+/****************************************************************************/
+/* specs checker      :                                                     */
+
+
+void valid_specs()
+{
+  speclist *s = program_specs;
+  while (s != NULL)
+  {
+    s->valid = s->valid || eval(s->expr);
+    s = s->next;
+  }
+}
+
+
 /****************************************************************************/
 
 int main (int argc, char **argv)
