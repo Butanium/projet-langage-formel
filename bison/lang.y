@@ -61,6 +61,19 @@ typedef struct speclist
   struct speclist *next;
 } speclist;
 
+typedef struct stmtlist
+{
+  stmt *stmt;
+  struct stmtlist *next;
+} stmtlist;
+
+typedef struct program_state
+{
+  var global_vars;
+  var local_vars;
+  stmtlist *stmts; // one statement per process
+} program_state;
+
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
 
@@ -334,6 +347,40 @@ void valid_specs()
     s->valid = s->valid || eval(s->expr);
     s = s->next;
   }
+}
+
+
+/****************************************************************************/
+/* hash table for states      :                                            */
+
+program_state *make_pstate(var global_vars, var local_vars, stmtlist *stmts)
+{
+  program_state *state = malloc(sizeof(struct program_state));
+  state->global_vars = global_vars;
+  state->local_vars = local_vars;
+  memcpy(state->stmts, stmts, sizeof(struct stmtlist));
+  return state;
+}
+
+wState *make_wstate(program_state *state)
+{
+  wState *wstate = malloc(sizeof(struct wState));
+  wstate->memory = state;
+  wstate->hash = xcrc32(state, sizeof(struct program_state), 0xffffffff);
+  return wstate;
+}
+
+int save_current_state(stmtlist *stmts)
+{
+  program_state *state = make_pstate(*global_vars, *current_vars, stmts);
+  wState *wstate = make_wstate(state);
+
+  if (wHashFind(hash, wstate) != NULL) return 0; 
+
+  wHashInsert(hash, wstate);
+  valid_specs();
+
+  return 1;
 }
 
 
