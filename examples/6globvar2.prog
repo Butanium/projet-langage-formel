@@ -12,3 +12,5 @@ proc p0
         od
     od
 end
+
+reach again == 1

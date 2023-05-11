@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "hash.c"
+#include "crc32.c"
 
 int yylex();
 
@@ -52,12 +54,23 @@ typedef struct stmt	// command
 	varlist *list;
 } stmt;
 
+typedef struct speclist
+{
+  int valid;
+  expr *expr;
+  struct speclist *next;
+} speclist;
+
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
 
 var *global_vars;
 var *current_vars;
 proclist *program_procs = NULL;
+speclist *program_specs;
+
+wHash *hash;
+
 
 /****************************************************************************/
 /* Functions for setting up data structures at parse time.                 */
@@ -102,6 +115,15 @@ proclist* make_proclist (stmt *s, char *name)
 	current_vars = NULL;
 	p->next = program_procs;
 	program_procs = p;
+}
+
+speclist* make_speclist (expr *exp, speclist* next)
+{
+  speclist *s = malloc(sizeof(speclist));
+  s->valid = 0;
+  s->expr = exp;
+  s->next = next;
+  return s;
 }
 
 expr* make_expr (int type, var *var, expr *left, expr *right)
@@ -150,14 +172,16 @@ stmt* make_stmt (int type, var *var, expr *expr,
 	expr *e;
 	stmt *s;
 	int n;
+  speclist *spec;
 }
 
 %type <v> declist
 %type <l> varlist
 %type <e> expr
 %type <s> stmt assign guardlist
+%type <spec> speclist
 
-%token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR GT LT
+%token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT REACH GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR GT LT
 %token <i> IDENT
 %token <n> INT
 
@@ -170,7 +194,7 @@ stmt* make_stmt (int type, var *var, expr *expr,
 
 %%
 
-prog	: global_vars  proclist	
+prog	: global_vars  proclist	speclist { program_specs = $3; }
 proc : PROC IDENT local_vars stmt END { make_proclist($4, $2);}
 proclist: 
 	 proc proclist 
@@ -196,6 +220,10 @@ stmt	: assign
 	| IF guardlist FI { $$ = make_stmt(IF,NULL,NULL,$2,NULL,NULL); }
 	| PRINT varlist
 		{ $$ = make_stmt(PRINT,NULL,NULL,NULL,NULL,$2); }
+  | REACH expr
+    { $$ = make_stmt(REACH,NULL,$2,NULL,NULL,NULL); }
+/* (int type, var *var, expr *expr,
+			stmt *left, stmt *right, varlist *list)*/
 	| SKIP { $$ = make_stmt(SKIP, NULL, NULL, NULL, NULL, NULL); }
 	| BREAK { $$ = make_stmt(BREAK, NULL, NULL, NULL, NULL, NULL); }
 
@@ -219,12 +247,16 @@ expr	: IDENT		{ $$ = make_expr(0,find_ident($1),NULL,NULL); }
 	| NOT expr	{ $$ = make_expr(NOT,NULL,$2,NULL); }
 	| '(' expr ')'	{ $$ = $2; }
 	| ELSE { $$ = make_expr(ELSE, NULL, NULL, NULL); }
-	| expr ADD expr { $$ = make_expr(ADD, NULL, $1, $3); }
+  | expr ADD expr { $$ = make_expr(ADD, NULL, $1, $3); }
 	| expr SUB expr { $$ = make_expr(SUB, NULL, $1, $3); }
 	| expr MUL expr { $$ = make_expr(MUL, NULL, $1, $3); }
 	| expr GT expr { $$ = make_expr(GT, NULL, $1, $3); }
 	| expr LT expr { $$ = make_expr(LT, NULL, $1, $3); }
 	| INT {$$ = make_const(INT, $1);}
+
+speclist : { $$ = NULL; }
+  | REACH expr speclist { $$ = make_speclist($2, $3); }
+
 %%
 
 #include "langlex.c"
@@ -295,6 +327,9 @@ int main (int argc, char **argv)
 {
 	if (argc <= 1) { yyerror("no file specified"); exit(1); }
 	yyin = fopen(argv[1],"r");
+
+  //hash = wHashCreate(xcrc32)
+
 	if (!yyparse()) printf("parsing successful\n");
 	else exit(1);
 	// execute(program_stmts);

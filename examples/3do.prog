@@ -8,3 +8,7 @@ proc p0
     :: f0 -> skip
     od
 end
+
+reach c == 1
+reach c == 2
+reach c == 3

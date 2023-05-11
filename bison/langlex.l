@@ -12,6 +12,7 @@ DIG	[0-9]
 "else"	{ return ELSE; }
 "fi"	{ return FI; }
 "print"	{ return PRINT; }
+"reach" { return REACH; }
 "proc" { return PROC; }
 "end" { return END; }
 "skip" {return SKIP;}
