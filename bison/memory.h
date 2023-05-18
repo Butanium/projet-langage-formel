@@ -17,7 +17,7 @@ typedef struct stmt // command
 } stmt;
 
 typedef struct el* program_state;
-
+int proc_count;
 int get_val(program_state state, int var);
 program_state set_val(program_state state, int var, int val);
 stmt get_stmt(program_state state, int proc);
