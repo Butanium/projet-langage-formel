@@ -7,35 +7,34 @@
 /***************************************************************************/
 /* Data structures for storing a programme.                                */
 
+void yyerror(char *s)
+{
+	fflush(stdout);
+	fprintf(stderr, "%s\n", s);
+}
 typedef struct varlist // a variable list
 {
     char *name;
     int index;
     struct varlist *next;
 } varlist;
-
 typedef struct proclist
 {
-    struct proc *proc;
+    struct stmt *proc;
     struct proclist *next;
 } proclist;
-
-typedef struct speclist
-{
-    int valid;
-    expr *expr;
-    struct speclist *next;
-} speclist;
 
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
 int proc_count;
+program_state init_state;
 int vars_count;
 varlist *global_vars_names;
 varlist *current_vars_names;
 proclist *program_procs = NULL; // liste de tous les processus
-speclist *program_specs;        // Liste de toutes les specifications
+speclist *program_specs = NULL;        // Liste de toutes les specifications
 wHash *hash;
+
 /****************************************************************************/
 /* Functions for setting up data structures at parse time.                 */
 int find_ident(char *s)
@@ -57,16 +56,16 @@ int find_ident(char *s)
     return v->index;
 }
 
-varlist *add_var(char *s, varlist *vars)
+void add_var(char *s)
 {
     varlist *v = malloc(sizeof(varlist));
     v->name = s;
     v->index = vars_count;
     vars_count++;
-    v->next = vars;
+    v->next = current_vars_names;
 }
 
-proclist *add_proc(stmt *proc)
+void add_proc(stmt *proc)
 {
     proclist *p = malloc(sizeof(proclist));
     proc_count++;
@@ -76,13 +75,12 @@ proclist *add_proc(stmt *proc)
     program_procs = p;
 }
 
-speclist *make_speclist(expr *exp, speclist *next)
+void make_speclist(expr *exp)
 {
     speclist *s = malloc(sizeof(speclist));
     s->valid = 0;
     s->expr = exp;
-    s->next = next;
-    return s;
+    s->next = program_specs;
 }
 
 expr *make_expr(int type, int var, expr *left, expr *right)
@@ -112,7 +110,7 @@ struct el
     stmt *stmt;
 };
 
-program_state make_init_state()
+void make_init_state()
 {
     program_state state = calloc(vars_count + proc_count, sizeof(struct el));
     proclist *p = program_procs;
@@ -121,7 +119,7 @@ program_state make_init_state()
         state[i].stmt = p->proc;
         p = p->next;
     }
-    return state;
+    init_state = state;
 }
 
 int get_val(program_state state, int var)
@@ -163,26 +161,4 @@ wState *make_wstate(program_state state)
 int cmp_wstate(wState *state1, wState *state2)
 {
     return memcmp(state1->memory, state2->memory, sizeof(struct el) * (vars_count + proc_count));
-}
-
-void valid_specs()
-{
-    speclist *s = program_specs;
-    while (s != NULL)
-    {
-        s->valid = s->valid || eval(s->expr);
-        s = s->next;
-    }
-}
-
-int save_state(program_state state)
-{
-    wState *wstate = make_wstate(state);
-    if (wHashFind(hash, wstate) != NULL)
-        return 0;
-
-    wHashInsert(hash, wstate);
-    valid_specs();
-
-    return 1;
 }
