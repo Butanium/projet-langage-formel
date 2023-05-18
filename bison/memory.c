@@ -29,8 +29,8 @@ typedef struct speclist
 
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
-int *proc_count;
-int *vars_count;
+int proc_count;
+int vars_count;
 varlist *global_vars_names;
 varlist *current_vars_names;
 proclist *program_procs = NULL; // liste de tous les processus
@@ -114,9 +114,9 @@ struct el
 
 program_state make_init_state()
 {
-    program_state state = calloc(*vars_count + *proc_count, sizeof(struct el));
+    program_state state = calloc(vars_count + proc_count, sizeof(struct el));
     proclist *p = program_procs;
-    for (int i = *vars_count; i < *vars_count + *proc_count; i++)
+    for (int i = vars_count; i < vars_count + proc_count; i++)
     {
         state[i].stmt = p->proc;
         p = p->next;
@@ -131,22 +131,22 @@ int get_val(program_state state, int var)
 
 program_state set_val(program_state state, int var, int val)
 {
-    program_state new_state = malloc(sizeof(struct el) * (*vars_count + *proc_count));
-    memcpy(new_state, state, sizeof(struct el) * (*vars_count + *proc_count));
+    program_state new_state = malloc(sizeof(struct el) * (vars_count + proc_count));
+    memcpy(new_state, state, sizeof(struct el) * (vars_count + proc_count));
     new_state[var].value = val;
     return new_state;
 }
 
 stmt *get_stmt(program_state state, int proc)
 {
-    return state[*vars_count + proc].stmt;
+    return state[vars_count + proc].stmt;
 }
 
 program_state set_stmt(program_state state, int proc, stmt *stmt)
 {
-    program_state new_state = malloc(sizeof(struct el) * (*vars_count + *proc_count));
-    memcpy(new_state, state, sizeof(struct el) * (*vars_count + *proc_count));
-    new_state[*vars_count + proc].stmt = stmt;
+    program_state new_state = malloc(sizeof(struct el) * (vars_count + proc_count));
+    memcpy(new_state, state, sizeof(struct el) * (vars_count + proc_count));
+    new_state[vars_count + proc].stmt = stmt;
     return new_state;
 }
 
@@ -156,13 +156,13 @@ wState *make_wstate(program_state state)
 {
     wState *wstate = malloc(sizeof(struct wState));
     wstate->memory = state;
-    wstate->hash = xcrc32((unsigned char *)state, sizeof(struct el) * (*vars_count + *proc_count), 0xffffffff);
+    wstate->hash = xcrc32((unsigned char *)state, sizeof(struct el) * (vars_count + proc_count), 0xffffffff);
     return wstate;
 }
 
 int cmp_wstate(wState *state1, wState *state2)
 {
-    return memcmp(state1->memory, state2->memory, sizeof(struct el) * (*vars_count + *proc_count));
+    return memcmp(state1->memory, state2->memory, sizeof(struct el) * (vars_count + proc_count));
 }
 
 void valid_specs()
