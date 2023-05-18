@@ -61,6 +61,19 @@ typedef struct speclist
   struct speclist *next;
 } speclist;
 
+typedef struct stmtlist
+{
+  stmt *stmt;
+  struct stmtlist *next;
+} stmtlist;
+
+typedef struct program_state
+{
+  var global_vars;
+  var local_vars;
+  stmtlist *stmts; // one statement per process
+} program_state;
+
 /****************************************************************************/
 /* All data pertaining to the programme are accessible from these two vars. */
 
@@ -338,13 +351,52 @@ void valid_specs()
 
 
 /****************************************************************************/
+/* hash table for states      :                                            */
+
+program_state *make_pstate(var global_vars, var local_vars, stmtlist *stmts)
+{
+  program_state *state = malloc(sizeof(struct program_state));
+  state->global_vars = global_vars;
+  state->local_vars = local_vars;
+  memcpy(state->stmts, stmts, sizeof(struct stmtlist));
+  return state;
+}
+
+wState *make_wstate(program_state *state)
+{
+  wState *wstate = malloc(sizeof(struct wState));
+  wstate->memory = state;
+  wstate->hash = xcrc32((unsigned char*)state, sizeof(struct program_state), 0xffffffff);
+  return wstate;
+}
+
+int save_current_state(stmtlist *stmts)
+{
+  program_state *state = make_pstate(*global_vars, *current_vars, stmts);
+  wState *wstate = make_wstate(state);
+
+  if (wHashFind(hash, wstate) != NULL) return 0; 
+
+  wHashInsert(hash, wstate);
+  valid_specs();
+
+  return 1;
+}
+
+int cmp_wstate(wState *state1, wState *state2)
+{
+  return memcmp(state1->memory, state2->memory, sizeof(struct program_state));
+}
+
+
+/****************************************************************************/
 
 int main (int argc, char **argv)
 {
 	if (argc <= 1) { yyerror("no file specified"); exit(1); }
 	yyin = fopen(argv[1],"r");
 
-  //hash = wHashCreate(xcrc32)
+  hash = wHashCreate(cmp_wstate);
 
 	if (!yyparse()) printf("parsing successful\n");
 	else exit(1);
