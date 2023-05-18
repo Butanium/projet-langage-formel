@@ -8,7 +8,7 @@ void yyerror(char *s)
 	fprintf(stderr, "%s\n", s);
 }
 
-int* init_state;
+program_state init_state;
 %}
 
 /****************************************************************************/
@@ -167,5 +167,5 @@ int main (int argc, char **argv)
 
 	if (!yyparse()) printf("parsing successful\n");
 	else exit(1);
-	// execute(program_stmts);
+	exec();
 }
