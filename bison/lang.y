@@ -1,11 +1,5 @@
 %{
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "hash.c"
-#include "crc32.c"
-
 int yylex();
 
 void yyerror(char *s)
@@ -14,164 +8,7 @@ void yyerror(char *s)
 	fprintf(stderr, "%s\n", s);
 }
 
-/***************************************************************************/
-/* Data structures for storing a programme.                                */
-
-typedef struct var	// a variable
-{
-	char *name;
-	int value;
-	struct var *next;
-} var;
-
-typedef struct varlist	// variable reference (used for print statement)
-{
-	struct var *var;
-	struct varlist *next;
-} varlist;
-
-typedef struct proclist
-{
-	struct stmt *body;
-	struct var *local_vars;
-	struct proclist *next;
-	char *name;
-} proclist;
-
-typedef struct expr	// boolean expression
-{
-	int type;	// INT, OR, AND, NOT, 0 (variable)
-	var *var;
-	struct expr *left, *right;
-} expr;
-
-typedef struct stmt	// command
-{
-	int type;	// ASSIGN, ';', WHILE, PRINT
-	var *var;
-	expr *expr;
-	struct stmt *left, *right;
-	varlist *list;
-} stmt;
-
-typedef struct speclist
-{
-  int valid;
-  expr *expr;
-  struct speclist *next;
-} speclist;
-
-typedef struct stmtlist
-{
-  stmt *stmt;
-  struct stmtlist *next;
-} stmtlist;
-
-typedef struct program_state
-{
-  var global_vars;
-  var local_vars;
-  stmtlist *stmts; // one statement per process
-} program_state;
-
-/****************************************************************************/
-/* All data pertaining to the programme are accessible from these two vars. */
-
-var *global_vars;
-var *current_vars;
-proclist *program_procs = NULL;
-speclist *program_specs;
-
-wHash *hash;
-
-
-/****************************************************************************/
-/* Functions for setting up data structures at parse time.                 */
-
-var* make_ident (char *s)
-{
-	var *v = malloc(sizeof(var));
-	v->name = s;
-	v->value = 0;	// make variable false initially
-	v->next = NULL;
-	return v;
-}
-
-
-var* find_ident (char *s)
-{
-	var *v = current_vars;
-	while (v && strcmp(v->name,s)) v = v->next;
-	if (!v) {
-		v = global_vars;
-		while (v && strcmp(v->name,s)) v = v->next;
-	}
-	if (!v) { yyerror("undeclared variable"); exit(1); }
-	return v;
-}
-
-varlist* make_varlist (char *s)
-{
-	var *v = find_ident(s);
-	varlist *l = malloc(sizeof(varlist));
-	l->var = v;
-	l->next = NULL;
-	return l;
-}
-
-proclist* make_proclist (stmt *s, char *name)
-{
-	proclist *p = malloc(sizeof(proclist));
-	p->body = s;
-	p->name = name;
-	p->local_vars = current_vars;
-	current_vars = NULL;
-	p->next = program_procs;
-	program_procs = p;
-}
-
-speclist* make_speclist (expr *exp, speclist* next)
-{
-  speclist *s = malloc(sizeof(speclist));
-  s->valid = 0;
-  s->expr = exp;
-  s->next = next;
-  return s;
-}
-
-expr* make_expr (int type, var *var, expr *left, expr *right)
-{
-	expr *e = malloc(sizeof(expr));
-	e->type = type;
-	e->var = var;
-	e->left = left;
-	e->right = right;
-	return e;
-}
-
-expr* make_const(int type, int n)
-{
-	var *v = malloc(sizeof(var));
-	v->name = NULL;
-	v->value = n;
-	v->next = NULL;
-	return make_expr(type, v, NULL, NULL);
-}
-
-stmt* make_stmt (int type, var *var, expr *expr,
-			stmt *left, stmt *right, varlist *list)
-{
-	stmt *s = malloc(sizeof(stmt));
-	s->type = type;
-	s->var = var;
-	s->expr = expr;
-	s->left = left;
-	s->right = right;
-	s->list = list;
-	return s;
-}
-
-
+int* init_state;
 %}
 
 /****************************************************************************/
@@ -180,16 +17,12 @@ stmt* make_stmt (int type, var *var, expr *expr,
 
 %union {
 	char *i;
-	var *v;
-	varlist *l;
 	expr *e;
 	stmt *s;
 	int n;
   speclist *spec;
 }
 
-%type <v> declist
-%type <l> varlist
 %type <e> expr
 %type <s> stmt assign guardlist
 %type <spec> speclist
@@ -207,38 +40,33 @@ stmt* make_stmt (int type, var *var, expr *expr,
 
 %%
 
-prog	: global_vars  proclist	speclist { program_specs = $3; }
+prog	: global_vars proclist	speclist { program_specs = $3; }
 proc : PROC IDENT local_vars stmt END { make_proclist($4, $2);}
-proclist: 
-	 proc proclist 
-	| proc
+proclist:  { init_state = make_init_state();}
+	| proc proclist 
 
 local_vars: 
 | VAR declist ';' { current_vars = $2; }
 
 global_vars	: 
-	VAR declist ';'	{ global_vars = $2; }
 	| VAR declist ';' global_vars
 		{ global_vars->next = $2; }
 
-declist	: IDENT			{ $$ = make_ident($1); }
-	| declist ',' IDENT	{ ($$ = make_ident($3))->next = $1; }
+declist	: IDENT			{ $$ = make_ident($1);}
+	| declist ',' IDENT	{ ($$ = make_ident($3))->next = $1; current_vars_count++; }
 
 stmt	: assign
-	// TODO: allow local variables
 	| stmt ';' stmt	
-		{ $$ = make_stmt(';',NULL,NULL,$1,$3,NULL); }
+		{ $$ = make_stmt(';',NULL,NULL,$1,$3); }
 	| DO guardlist OD
-		{ $$ = make_stmt(DO,NULL, NULL,$2,NULL,NULL); }
-	| IF guardlist FI { $$ = make_stmt(IF,NULL,NULL,$2,NULL,NULL); }
-	| PRINT varlist
-		{ $$ = make_stmt(PRINT,NULL,NULL,NULL,NULL,$2); }
+		{ $$ = make_stmt(DO,NULL, NULL,$2,NULL); }
+	| IF guardlist FI { $$ = make_stmt(IF,NULL,NULL,$2,NULL); }
   | REACH expr
     { $$ = make_stmt(REACH,NULL,$2,NULL,NULL,NULL); }
 /* (int type, var *var, expr *expr,
-			stmt *left, stmt *right, varlist *list)*/
-	| SKIP { $$ = make_stmt(SKIP, NULL, NULL, NULL, NULL, NULL); }
-	| BREAK { $$ = make_stmt(BREAK, NULL, NULL, NULL, NULL, NULL); }
+			stmt *left, stmt *right, )*/
+	| SKIP { $$ = make_stmt(SKIP, NULL, NULL, NULL, NULL); }
+	| BREAK { $$ = make_stmt(BREAK, NULL, NULL, NULL, NULL); }
 
 guardlist : 
 	 GUARD expr ARROW stmt guardlist
@@ -249,8 +77,6 @@ guardlist :
 assign	: IDENT ASSIGN expr
 		{ $$ = make_stmt(ASSIGN, find_ident($1),$3,NULL,NULL,NULL); }
 
-varlist	: IDENT			{ $$ = make_varlist($1); }
-	| varlist ',' IDENT	{ ($$ = make_varlist($3))->next = $1; }
 
 expr	: IDENT		{ $$ = make_expr(0,find_ident($1),NULL,NULL); }
 	| expr XOR expr	{ $$ = make_expr(XOR,NULL,$1,$3); }
@@ -289,16 +115,9 @@ int eval (expr *e)
 		case SUB: return eval(e->left) - eval(e->right);
 		case MUL: return eval(e->left) * eval(e->right);
 		case ELSE: return 1; // todo: implement
-		case INT: return e->var->value;
-		case 0: return e->var->value;
+		case INT: return e->var->value; // const
+		case 0: return e->var->value; // ident
 	}
-}
-
-void print_vars (varlist *l)
-{
-	if (!l) return;
-	print_vars(l->next);
-	printf("%s = %d  ", l->var->name, l->var->value);
 }
 
 
@@ -321,8 +140,6 @@ int execute (stmt *s)
 			print_vars(s->list);
 			puts("");
 			return 0;
-		case SKIP:
-			return 0;
 		case BREAK:
 			return 1;
 		case GUARD:
@@ -337,56 +154,6 @@ int execute (stmt *s)
 
 /****************************************************************************/
 /* specs checker      :                                                     */
-
-
-void valid_specs()
-{
-  speclist *s = program_specs;
-  while (s != NULL)
-  {
-    s->valid = s->valid || eval(s->expr);
-    s = s->next;
-  }
-}
-
-
-/****************************************************************************/
-/* hash table for states      :                                            */
-
-program_state *make_pstate(var global_vars, var local_vars, stmtlist *stmts)
-{
-  program_state *state = malloc(sizeof(struct program_state));
-  state->global_vars = global_vars;
-  state->local_vars = local_vars;
-  memcpy(state->stmts, stmts, sizeof(struct stmtlist));
-  return state;
-}
-
-wState *make_wstate(program_state *state)
-{
-  wState *wstate = malloc(sizeof(struct wState));
-  wstate->memory = state;
-  wstate->hash = xcrc32((unsigned char*)state, sizeof(struct program_state), 0xffffffff);
-  return wstate;
-}
-
-int save_current_state(stmtlist *stmts)
-{
-  program_state *state = make_pstate(*global_vars, *current_vars, stmts);
-  wState *wstate = make_wstate(state);
-
-  if (wHashFind(hash, wstate) != NULL) return 0; 
-
-  wHashInsert(hash, wstate);
-  valid_specs();
-
-  return 1;
-}
-
-int cmp_wstate(wState *state1, wState *state2)
-{
-  return memcmp(state1->memory, state2->memory, sizeof(struct program_state));
-}
 
 
 /****************************************************************************/
