@@ -99,61 +99,119 @@ speclist : { $$ = NULL; }
 %%
 
 #include "langlex.c"
+#include "memory.h"
 
 /****************************************************************************/
 /* programme interpreter      :                                             */
 
-int eval (expr *e)
+int eval (program_state *state, expr *e)
 {
 	switch (e->type)
 	{
-		case OR: return eval(e->left) || eval(e->right);
-		case AND: return eval(e->left) && eval(e->right);
-		case EQUAL: return eval(e->left) == eval(e->right);
-		case NOT: return !eval(e->left);
-		case ADD: return eval(e->left) + eval(e->right);
-		case SUB: return eval(e->left) - eval(e->right);
-		case MUL: return eval(e->left) * eval(e->right);
+		case OR: return eval(state, e->left) || eval(state, e->right);
+		case AND: return eval(state, e->left) && eval(state, e->right);
+		case EQUAL: return eval(state, e->left) == eval(state, e->right);
+		case NOT: return !eval(state, e->left);
+		case ADD: return eval(state, e->left) + eval(state, e->right);
+		case SUB: return eval(state, e->left) - eval(state, e->right);
+		case MUL: return eval(state, e->left) * eval(state, e->right);
 		case ELSE: return 1; // todo: implement
-		case INT: return e->var->value; // const
-		case 0: return e->var->value; // ident
+		case INT: return get_val(state, e->var);
+		case 0: return get_val(state, e->var);
 	}
 }
 
 
-int execute (stmt *s)
+typedef struct stack {
+  stmt *s;
+  struct stack *next;
+} stack;
+
+typedef struct do_stack {
+  stmt *break_s;
+  stack *guard_s;
+  struct do_stack *next;
+} do_stack;
+
+program_state **exec (program_state *state, stmt *next_s, do_stack **current_stack)
 {
-	switch(s->type)
-	{
-		case ASSIGN:
-			s->var->value = eval(s->expr);
-			return 0;
-		case ';':
-			if (execute(s->left)) return 1;
-			return execute(s->right);
-		case DO:
-			while (execute(s->left) == 0);
-			return 0;
-		case IF:
-			execute(s->left);
-		case PRINT: 
-			print_vars(s->list);
-			puts("");
-			return 0;
-		case BREAK:
-			return 1;
-		case GUARD:
-			if (eval(s->expr)) {
-				if (execute(s->left)) return 1;
-			} else {
-				return execute(s->right);
-			}
-	}
+  if (!save_state(state)) return NULL;
+
+  program_state **ret_val = malloc(proc_count * sizeof(program_state*));
+
+  for (int proc = 0; proc < proc_count; proc++)
+  {
+    stmt *s = get_stmt(state, proc);
+    switch(s->type)
+    {
+      case ASSIGN:
+        program_state *new_state_assign = set_val(state, proc, s->var, eval(state, s->expr));
+        ret_val[proc] = new_state_assign;
+      case ';':
+        program_state *left_state = set_stmt(state, proc, s->left);
+        program_state **middle_state = exec(left_state, s->right, current_stack);
+        program_state *right_state = set_stmt(middle_state[proc], proc, s->right);
+        ret_val[proc] = exec(right_state, next_s, current_stack)[proc];
+      case DO:
+        stack *new_stack_do = malloc(proc_count * sizeof(struct stack));
+        new_stack_do->s = s;
+        new_stack_do->next = NULL;
+
+        do_stack *new_do_s_do = malloc(proc_count * sizeof(struct do_stack)); //{next_s, new_stack, new_do_s[proc]};
+        new_do_s_do->break_s = next_s;
+        new_do_s_do->guard_s = new_stack_do;
+        new_do_s_do->next = current_stack[proc];
+
+        current_stack[proc] = new_do_s_do;
+        
+        ret_val[proc] = exec(state, next_s, current_stack)[proc];
+      case IF:
+        program_state *new_state_if = set_stmt(state, proc, s->left);
+
+        stack *new_if_s_if = malloc(sizeof(struct stack));
+        new_if_s_if->s = next_s;
+        new_if_s_if->next = current_stack[proc]->guard_s;
+
+        current_stack[proc]->guard_s = new_if_s_if;
+
+        ret_val[proc] = exec(new_state_if, next_s, current_stack)[proc];
+      case PRINT:
+        ret_val[proc] = state;
+      case SKIP:
+        ret_val[proc] = state;
+      case BREAK:
+        program_state *new_state_break = set_stmt(state, proc, current_stack[proc]->break_s);
+
+        do_stack **new_do_s_break = malloc(proc_count * sizeof(struct do_stack*));
+        memcpy(new_do_s_break, current_stack, proc_count * sizeof(struct do_stack*));
+
+        new_do_s_break[proc] = new_do_s_break[proc]->next;
+
+        ret_val[proc] = exec(new_state_break, next_s, new_do_s_break)[proc];
+      case GUARD:
+        if (eval(state, s->expr))
+        {
+          program_state *new_state_guard = set_stmt(state, proc, s->left);
+          program_state *guard_state_guard = exec(new_state_guard, next_s, current_stack)[proc];
+          program_state *next_state_guard = set_stmt(guard_state_guard, proc, current_stack[proc]->guard_s->s);
+
+          do_stack **new_do_s_guard = malloc(proc_count * sizeof(struct do_stack*));
+          memcpy(new_do_s_guard, current_stack, proc_count * sizeof(struct do_stack*));
+
+          new_do_s_guard[proc]->guard_s = current_stack[proc]->guard_s->next;
+
+          exec(next_state_guard, next_s, new_do_s_guard);
+        }
+        
+        if (s->right != NULL)
+        {
+          program_state *new_state_guard = set_stmt(state, proc, s->right);
+          exec(new_state_guard, next_s, current_stack);
+        }
+        ret_val[proc] = NULL;
+    }
+  }
 }
-
-
-/****************************************************************************/
-/* specs checker      :                                                     */
 
 
 /****************************************************************************/
