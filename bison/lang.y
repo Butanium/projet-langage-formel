@@ -366,7 +366,7 @@ wState *make_wstate(program_state *state)
 {
   wState *wstate = malloc(sizeof(struct wState));
   wstate->memory = state;
-  wstate->hash = xcrc32(state, sizeof(struct program_state), 0xffffffff);
+  wstate->hash = xcrc32((unsigned char*)state, sizeof(struct program_state), 0xffffffff);
   return wstate;
 }
 
@@ -383,6 +383,11 @@ int save_current_state(stmtlist *stmts)
   return 1;
 }
 
+int cmp_wstate(wState *state1, wState *state2)
+{
+  return memcmp(state1->memory, state2->memory, sizeof(struct program_state));
+}
+
 
 /****************************************************************************/
 
@@ -391,7 +396,7 @@ int main (int argc, char **argv)
 	if (argc <= 1) { yyerror("no file specified"); exit(1); }
 	yyin = fopen(argv[1],"r");
 
-  //hash = wHashCreate(xcrc32)
+  hash = wHashCreate(cmp_wstate);
 
 	if (!yyparse()) printf("parsing successful\n");
 	else exit(1);
