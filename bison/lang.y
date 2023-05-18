@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "hash.c"
+#include "crc32.c"
 #include "memory.h"
 int yylex();
 
@@ -41,7 +42,8 @@ void yyerror(char *s)
 
 %%
 
-prog	: global_vars proclist	speclist 
+prog	: global_vars {global_vars_names = current_vars_names; current_vars_names = NULL;}
+          proclist	speclist 
 proc : PROC IDENT local_vars stmt END { add_proc($4);}
 proclist:  { make_init_state();}
 	| proc proclist 
@@ -49,7 +51,7 @@ proclist:  { make_init_state();}
 local_vars: 
 | VAR declist ';' 
 
-global_vars	: {global_vars_names = current_vars_names; current_vars_names = NULL;}
+global_vars	: 
 	| VAR declist ';' global_vars
 
 declist	: IDENT			{ add_var($1);}
@@ -91,7 +93,7 @@ expr	: IDENT		{ $$ = make_expr(0,find_ident($1),NULL,NULL); }
 	| expr MUL expr { $$ = make_expr(MUL, -1, $1, $3); }
 	| expr GT expr { $$ = make_expr(GT, -1, $1, $3); }
 	| expr LT expr { $$ = make_expr(LT, -1, $1, $3); }
-	| INT {$$ = make_expr(INT, $1, NULL, NULL); printf("int %d\n", $1);}
+	| INT {$$ = make_expr(INT, $1, NULL, NULL); }
 
 speclist : 
   | REACH expr speclist { make_speclist($2); }
@@ -99,6 +101,162 @@ speclist :
 %%
 
 #include "langlex.c"
+
+
+typedef struct varlist // a variable list
+{
+    char *name;
+    int index;
+    struct varlist *next;
+} varlist;
+typedef struct proclist
+{
+    struct stmt *proc;
+    struct proclist *next;
+} proclist;
+
+/****************************************************************************/
+/* All data pertaining to the programme are accessible from these two vars. */
+int proc_count;
+program_state init_state;
+int vars_count;
+varlist *global_vars_names;
+varlist *current_vars_names = NULL;
+proclist *program_procs = NULL; // liste de tous les processus
+speclist *program_specs = NULL;        // Liste de toutes les specifications
+wHash *hash;
+
+/****************************************************************************/
+/* Functions for setting up data structures at parse time.                 */
+int find_ident(char *s)
+{
+    varlist *v = current_vars_names;
+    while (v && strcmp(v->name, s)){
+        v = v->next;
+    }
+    if (!v)
+    {
+        v = global_vars_names;
+        while (v && strcmp(v->name, s)) {
+            v = v->next;
+        }
+    }
+    if (!v)
+    {
+        yyerror("undeclared variable");
+        exit(1);
+    }
+    return v->index;
+}
+
+void add_var(char *s)
+{
+    varlist *v = malloc(sizeof(varlist));
+    v->name = s;
+    v->index = vars_count;
+    vars_count++;
+    v->next = current_vars_names;
+    current_vars_names = v;
+}
+
+void add_proc(stmt *proc)
+{
+    proclist *p = malloc(sizeof(proclist));
+    proc_count++;
+    current_vars_names = NULL;
+    p->proc = proc;
+    p->next = program_procs;
+    program_procs = p;
+}
+
+void make_speclist(expr *exp)
+{
+    speclist *s = malloc(sizeof(speclist));
+    s->valid = 0;
+    s->expr = exp;
+    s->next = program_specs;
+}
+
+expr *make_expr(int type, int var, expr *left, expr *right)
+{
+    expr *e = malloc(sizeof(expr));
+    e->type = type;
+    e->var = var;
+    e->left = left;
+    e->right = right;
+    return e;
+}
+
+stmt *make_stmt(int type, int var, expr *expr,
+                stmt *left, stmt *right)
+{
+    stmt *s = malloc(sizeof(stmt));
+    s->type = type;
+    s->var = var;
+    s->expr = expr;
+    s->left = left;
+    s->right = right;
+    return s;
+}
+struct el
+{
+    int value;
+    stmt *stmt;
+};
+
+void make_init_state()
+{
+    program_state state = calloc(vars_count + proc_count, sizeof(struct el));
+    proclist *p = program_procs;
+    for (int i = vars_count; i < vars_count + proc_count; i++)
+    {
+        state[i].stmt = p->proc;
+        p = p->next;
+    }
+    init_state = state;
+}
+
+int get_val(program_state state, int var)
+{
+    return state[var].value;
+}
+
+program_state set_val(program_state state, int var, int val)
+{
+    program_state new_state = malloc(sizeof(struct el) * (vars_count + proc_count));
+    memcpy(new_state, state, sizeof(struct el) * (vars_count + proc_count));
+    new_state[var].value = val;
+    return new_state;
+}
+
+stmt *get_stmt(program_state state, int proc)
+{
+    return state[vars_count + proc].stmt;
+}
+
+program_state set_stmt(program_state state, int proc, stmt *stmt)
+{
+    program_state new_state = malloc(sizeof(struct el) * (vars_count + proc_count));
+    memcpy(new_state, state, sizeof(struct el) * (vars_count + proc_count));
+    new_state[vars_count + proc].stmt = stmt;
+    return new_state;
+}
+
+/****************************************************************************/
+/* hash table for states      :                                            */
+wState *make_wstate(program_state state)
+{
+    wState *wstate = malloc(sizeof(struct wState));
+    wstate->memory = state;
+    wstate->hash = xcrc32((unsigned char *)state, sizeof(struct el) * (vars_count + proc_count), 0xffffffff);
+    return wstate;
+}
+
+int cmp_wstate(wState *state1, wState *state2)
+{
+    return memcmp(state1->memory, state2->memory, sizeof(struct el) * (vars_count + proc_count));
+}
+
 
 /****************************************************************************/
 /* programme interpreter      :                                             */
