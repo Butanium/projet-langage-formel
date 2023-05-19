@@ -281,26 +281,30 @@ int cmp_wstate(wState *state1, wState *state2)
 /****************************************************************************/
 /* programme interpreter      :                                             */
 
-int eval(program_state state, expr *e)
+int eval(program_state state, expr *e, int else_value)
 {
     switch (e->type)
     {
     case OR:
-        return eval(state, e->left) || eval(state, e->right);
+        return eval(state, e->left, else_value) || eval(state, e->right, else_value);
     case AND:
-        return eval(state, e->left) && eval(state, e->right);
+        return eval(state, e->left, else_value) && eval(state, e->right, else_value);
     case EQUAL:
-        return eval(state, e->left) == eval(state, e->right);
+        return eval(state, e->left, else_value) == eval(state, e->right, else_value);
     case NOT:
-        return !eval(state, e->left);
+        return !eval(state, e->left, else_value);
     case ADD:
-        return eval(state, e->left) + eval(state, e->right);
+        return eval(state, e->left, else_value) + eval(state, e->right, else_value);
     case SUB:
-        return eval(state, e->left) - eval(state, e->right);
+        return eval(state, e->left, else_value) - eval(state, e->right, else_value);
     case MUL:
-        return eval(state, e->left) * eval(state, e->right);
+        return eval(state, e->left, else_value) * eval(state, e->right, else_value);
+    case GT:
+        return eval(state, e->left, else_value) > eval(state, e->right, else_value);
+    case LT:
+        return eval(state, e->left, else_value) < eval(state, e->right, else_value);
     case ELSE:
-        return 1; // todo: implement
+        return else_value;
     case INT:
         return e->var;
     case 0:
@@ -313,8 +317,7 @@ void valid_specs(program_state state)
     speclist *s = program_specs;
     while (s != NULL)
     {
-        if (!s->valid && eval(state, s->expr)) { printf("validing spec : %d\n", eval(state, s->expr)); }
-        s->valid = s->valid || eval(state, s->expr);
+        s->valid = s->valid || eval(state, s->expr, 0);
         s = s->next;
     }
 }
@@ -367,9 +370,17 @@ do_stack **mod_stacks(do_stack **arr, int proc, do_stack *s)
   return new_arr;
 }
 
+int *mod_else_values(int *arr, int proc, int s)
+{
+  int *new_arr = malloc(sizeof(int) * proc_count);
+  memcpy(new_arr, arr, sizeof(int) * proc_count);
+  new_arr[proc] = s;
+  return new_arr;
+}
+
 // exec(state, nexts, stacks, guard_visited) va parcourir tout les états atteignable non visités depuis state avec comme prochains stmts nexts et comme environnements DO stacks
-// guard_visited n'a de sens que dans un guard qui indique si un guard a été visité ou non (pour éviter de boucler et le else)
-void exec(program_state state, stmt **nexts, do_stack **stacks)
+// else_values n'a de sens que dans un guard qui indique si un guard a été visité ou non (pour gérer le guard else si il existe)
+void exec(program_state state, stmt **nexts, do_stack **stacks, int *else_values)
 {
     // Si on l'a déjà visité on ne fait rien
     if (!save_state(state)) return;
@@ -389,7 +400,7 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
           case ASSIGN:
           {
               //On modifie d'abord la valeur dans l'état
-              program_state mod_state = set_val(state, current_stmt->var, eval(state, current_stmt->expr));
+              program_state mod_state = set_val(state, current_stmt->var, eval(state, current_stmt->expr, else_values[proc]));
 
               if (nexts[proc] == NULL)
               {
@@ -403,7 +414,7 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
                 stmt *next_stmt = nexts[proc];
                 stmt **new_nexts = mod_stmts(nexts, proc, NULL);
                 program_state next_state = set_stmt(mod_state, proc, next_stmt);
-                exec(next_state, new_nexts, stacks);
+                exec(next_state, new_nexts, stacks, else_values);
               }
           }
           break;
@@ -416,7 +427,7 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
               stmt **new_nexts = mod_stmts(nexts, proc, concat_stmt(current_stmt->right, nexts[proc]));
 
               //On execute le reste
-              exec(next_state, new_nexts, stacks);
+              exec(next_state, new_nexts, stacks, else_values);
           }
           break;
 
@@ -438,13 +449,11 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
               //On crée le nouvel état
               program_state new_state = set_stmt(state, proc, current_stmt->left);
 
-              //On reset le guard_visited
-              //int *new_guard_visited = malloc(sizeof(int) * proc_count);
-              //memcpy(new_guard_visited, guard_visited, sizeof(int) * proc_count);
-              //new_guard_visited[proc] = 0;
+              //On reset le else_value
+              int *new_else_values = mod_else_values(else_values, proc, 1);
 
               //On execute l'état
-              exec(new_state, new_nexts, new_stacks);
+              exec(new_state, new_nexts, new_stacks, new_else_values);
           }
           break;
 
@@ -454,13 +463,11 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
               //On crée le nouvel état
               program_state new_state = set_stmt(state, proc, current_stmt->left);
 
-              //On reset le guard_visited
-              //int *new_guard_visited = malloc(sizeof(int) * proc_count);
-              //memcpy(new_guard_visited, guard_visited, sizeof(int) * proc_count);
-              //new_guard_visited[proc] = 0;
+              //On reset le else_value
+              int *new_else_values = mod_else_values(else_values, proc, 1);
 
               //On execute cet état
-              exec(new_state, nexts, stacks);
+              exec(new_state, nexts, stacks, new_else_values);
           }
           break;
 
@@ -477,7 +484,7 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
             stmt **new_nexts = mod_stmts(nexts, proc, NULL);
 
             //On execute la suite
-            exec(new_state, new_nexts, stacks);
+            exec(new_state, new_nexts, stacks, else_values);
           }
           break;
 
@@ -495,7 +502,7 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
             stmt **new_nexts = mod_stmts(nexts, proc, NULL);
 
             //On execute la suite
-            exec(new_state, new_nexts, new_stacks);
+            exec(new_state, new_nexts, new_stacks, else_values);
           }
 
           //On est dans le cas d'un BREAK : on execute ce qui suit le DO (le DO est suivi d'un SKIP_DO qui s'occupera de dépiler la do_stack)
@@ -507,7 +514,7 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
               stmt **new_nexts = mod_stmts(nexts, proc, NULL);
 
               //On execute la suite
-              exec(new_state, new_nexts, stacks);
+              exec(new_state, new_nexts, stacks, else_values);
           }
           break;
 
@@ -515,17 +522,17 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
           //Et on execute les autre guards si il y en a
           case GUARD:
           {
-              //int guard_state;
+              int guard_state = 1;
               //On regarde si le guard est valide
-              if (eval(state, current_stmt->expr))
+              if (eval(state, current_stmt->expr, else_values[proc]))
               {
-                  //guard_state = 1;
+                  guard_state = 0;
 
                   //Si oui, on crée le nouvel état
                   program_state new_state = set_stmt(state, proc, current_stmt->left);
 
                   //On execute le guard
-                  exec(new_state, nexts, stacks);
+                  exec(new_state, nexts, stacks, else_values);
               }
 
 
@@ -535,12 +542,11 @@ void exec(program_state state, stmt **nexts, do_stack **stacks)
                   //On crée le nouvel état
                   program_state new_state = set_stmt(state, proc, current_stmt->right);
 
-                  //int *new_guard_visited = malloc(sizeof(int) * proc_count);
-                  //memcpy(new_guard_visited, guard_visited, sizeof(int) * proc_count);
-                  //new_guard_visited[proc] = guard_visited[proc] || guard_state;
+                  //On met à jour else_value
+                  int *new_else_values = mod_else_values(else_values, proc, else_values[proc] && guard_state);
 
                   //On execute les guards
-                  exec(new_state, nexts, stacks);
+                  exec(new_state, nexts, stacks, new_else_values);
               }
           }
           break;
@@ -572,10 +578,10 @@ int main(int argc, char **argv)
     stmt **nexts = malloc(proc_count * sizeof(stmt *));
     for (int i = 0; i < proc_count; i++) nexts[i] = NULL;
 
-    //int *guard_visited = malloc(proc_count * sizeof(int));
-    //for (int i = 0; i < proc_count; i++) guard_visited[i] = 0;
+    int *else_values = malloc(proc_count * sizeof(int));
+    for (int i = 0; i < proc_count; i++) else_values[i] = 1;
 
-    exec(init_state, nexts, stacks);
+    exec(init_state, nexts, stacks, else_values);
 
     speclist *specs = program_specs;
     int i = 0;
