@@ -8,3 +8,4 @@ end
 
 reach c == 3
 reach v == 2
+reach c == 0
