@@ -302,7 +302,7 @@ int eval(program_state state, expr *e)
     case ELSE:
         return 1; // todo: implement
     case INT:
-        return get_val(state, e->var);
+        return e->var;
     case 0:
         return get_val(state, e->var);
     }
