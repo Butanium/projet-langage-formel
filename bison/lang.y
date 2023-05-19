@@ -309,18 +309,18 @@ int eval(program_state state, expr *e)
     }
 }
 
-typedef struct stack
-{
-    stmt *s;
-    struct stack *next;
-} stack;
+//typedef struct stack
+//{
+//    stmt *s;
+//    struct stack *next;
+//} stack;
 
-typedef struct do_stack
-{
-    stmt *break_s;
-    stack *guard_s;
-    struct do_stack *next;
-} do_stack;
+//typedef struct do_stack
+//{
+//    stmt *break_s;
+//    stack *guard_s;
+//    struct do_stack *next;
+//} do_stack;
 
 void valid_specs(program_state state)
 {
@@ -350,182 +350,230 @@ int save_state(program_state state)
     return 1;
 }
 int execcount;
-program_state *exec(program_state state, stmt *next_s, do_stack **current_stack)
-{
-    printf("exec %d\n", execcount++);
-    if (!save_state(state))
-    {
-        printf("returneuuuh\n");
-        return NULL;
-    }
-    printf("ll\n");
-    program_state *ret_val = malloc(proc_count * sizeof(program_state));
 
+
+
+// Pile pour les environnements DO
+typedef struct do_stack
+{
+  stmt *break_s;
+  struct do_stack *next;
+} do_stack;
+
+//Concaténation de deux stmt
+stmt *concat_stmt(stmt *s1, stmt *s2)
+{
+  if (s1 == NULL && s2 == NULL) return NULL;
+  if (s1 == NULL) return s2;
+  if (s2 == NULL) return s1;
+  return make_stmt(';', -1, NULL, s1, s2);
+}
+
+//Modifie un stmt* dans un tableau
+stmt **mod_stmts(stmt **arr, int proc, stmt *s)
+{
+  stmt **new_arr = malloc(sizeof(stmt *) * proc_count);
+  memcpy(new_arr, arr, sizeof(stmt *) * proc_count);
+  new_arr[proc] = s;
+  return new_arr;
+}
+
+//Modifie un do_stack* dans un tableau
+do_stack **mod_stacks(do_stack **arr, int proc, do_stack *s)
+{
+  do_stack **new_arr = malloc(sizeof(do_stack *) * proc_count);
+  memcpy(new_arr, arr, sizeof(do_stack *) * proc_count);
+  new_arr[proc] = s;
+  return new_arr;
+}
+
+// exec(state, nexts, stacks, guard_visited) va parcourir tout les états atteignable non visités depuis state avec comme prochains stmts nexts et comme environnements DO stacks
+// guard_visited n'a de sens que dans un guard qui indique si un guard a été visité ou non (pour éviter de boucler et le else)
+void exec(program_state state, stmt **nexts, do_stack **stacks, int *guard_visited)
+{
+    // Si on l'a déjà visité on ne fait rien
+    if (!save_state(state)) return -1;
+
+
+    // On essaye d'avancer chaque processus d'une étape
     for (int proc = 0; proc < proc_count; proc++)
     {
-        printf("proc %d\n", proc);
-        stmt *s = get_stmt(state, proc);
-        if (s == NULL)
-            printf("nulleuh\n");
+
+        //Le stmt courant du processus
+        stmt *current_stmt = get_stmt(state, proc);
+
+        //On regarde ce qu'on a à faire
         switch (s->type)
         {
-        case ASSIGN:
-        {
-            program_state new_state_assign = set_val(state, s->var, eval(state, s->expr));
-            ret_val[proc] = new_state_assign;
-        }
-        break;
-        case ';':
-        {
-            program_state left_state = set_stmt(state, proc, s->left);
-            printf(" exec ;left\n");
-            program_state *middle_state = exec(left_state, s->right, current_stack);
-            if (middle_state == NULL)
-                return NULL;
-            // printf("middle_state null\n");
-            program_state right_state = set_stmt(middle_state[proc], proc, s->right);
+          // Si on est dans un assign : on chanqe la valeur et on essaye de continuer
+          case ASSIGN:
+          {
+              //On modifie d'abord la valeur dans l'état
+              program_state mod_state = set_val(state, s->var, eval(state, s->expr));
 
-            program_state *final_state = exec(right_state, next_s, current_stack);
+              if (nexts[proc] == NULL)
+              {
+                //Si on a pas de code après, on vérifie l'état et on s'arrête
+                save_state(new_state);
+                return;
+              }
+              else
+              {
+                //Si on a du code après, on l'exécute
+                stmt *next_stmt = nexts[proc];
+                stmt **new_nexts = mod_stmts(nexts, proc, NULL);
+                program_state next_state = set_stmt(mod_state, proc, next_stmt);
+                exec(next_state, new_nexts, stacks, guard_visited);
+              }
+          }
+          break;
 
-            if (final_state == NULL)
-                return NULL;
+          //On est dans une concaténation : on exécute le premier en donnant le second comme suite
+          case ';':
+          {
+              // On récupère l'état
+              program_state next_state = set_stmt(state, proc, s->left);
+              stmts **new_nexts = mod_stmts(nexts, proc, concat_stmt(s->right, nexts[proc]));
 
-            ret_val[proc] = final_state[proc];
+              //On execute le reste
+              exec(next_state, new_nexts, stacks, guard_visited);
+          }
+          break;
 
-            printf(" end seq\n");
-        }
-        break;
-        case DO:
-        {
-            printf("start\n");
-            struct stack *new_stack_do = malloc(proc_count * sizeof(struct stack));
-            new_stack_do->s = s;
-            new_stack_do->next = NULL;
+          //On est dans un DO : on empile un nouvel environnement sur la pile et on execute les guards
+          case DO:
+          {
+              //On créer un nouveau noeud de la pile
+              do_stack *new_stack = malloc(sizeof(struct do_stack));
 
-            do_stack *new_do_s_do = malloc(proc_count * sizeof(struct do_stack)); //{next_s, new_stack, new_do_s[proc]};
-            new_do_s_do->break_s = next_s;
-            new_do_s_do->guard_s = new_stack_do;
-            new_do_s_do->next = current_stack[proc];
+              //Si on break dans le DO, il faut executer ce qui suit le DO
+              new_stack->break_s = nexts[proc];
+              new_stack->next = stacks[proc];
 
-            current_stack[proc] = new_do_s_do;
+              do_stacks **new_stacks = mod_stacks(stacks, proc, new_stack);
 
-            program_state new_state = set_stmt(state, proc, s->left);
+              //Ce qu'il faut faire après un guard : revenir au premier guard
+              stmt **new_nexts = mod_stmts(nexts, proc, s->left);
 
-            program_state *final_state = exec(new_state, next_s, current_stack);
+              //On crée le nouvel état
+              program_state new_state = set_stmt(state, proc, s->left);
 
-            if (final_state == NULL)
-                return NULL;
+              //On reset le guard_visited
+              int *new_guard_visited = malloc(sizeof(int) * proc_count);
+              memcpy(new_guard_visited, guard_visited, sizeof(int) * proc_count);
+              new_guard_visited[proc] = 0;
 
-            ret_val[proc] = final_state[proc];
-            // if (ret_val[proc] == NULL) return NULL;
-            printf("end do\n");
-        }
-        break;
-        case IF:
-        {
-            program_state new_state_if = set_stmt(state, proc, s->left);
-            stack *new_if_s_if = malloc(sizeof(struct stack));
-            new_if_s_if->s = next_s;
-            new_if_s_if->next = current_stack[proc]->guard_s;
+              //On execute l'état
+              exec(new_state, new_nexts, new_stacks, new_guard_visited);
+          }
+          break;
 
-            current_stack[proc]->guard_s = new_if_s_if;
+          // On est dans un IF : on execute les guards
+          case IF:
+          {
+              //On crée le nouvel état
+              program_state new_state = set_stmt(state, proc, s->left);
 
-            program_state *final_state = exec(new_state_if, next_s, current_stack);
+              //On reset le guard_visited
+              int *new_guard_visited = malloc(sizeof(int) * proc_count);
+              memcpy(new_guard_visited, guard_visited, sizeof(int) * proc_count);
+              new_guard_visited[proc] = 0;
 
-            if (final_state == NULL)
-                return NULL;
+              //On execute cet état
+              exec(new_state, nexts, stacks, new_guard_visited);
+          }
+          break;
 
-            ret_val[proc] = final_state[proc];
-            // if (ret_val[proc] == NULL) return NULL;
-        }
-        break;
-        case PRINT:
-        {
-            ret_val[proc] = state;
-        }
-        break;
-        case SKIP:
-        {
-            printf("get skipped\n");
-            ret_val[proc] = state;
-        }
-        break;
-        case BREAK:
-        {
-            program_state new_state_break = set_stmt(state, proc, current_stack[proc]->break_s);
-            do_stack **new_do_s_break = malloc(proc_count * sizeof(struct do_stack *));
-            memcpy(new_do_s_break, current_stack, proc_count * sizeof(struct do_stack *));
+          // On est dans un PRINT ou dans un SKIP : on continue juste d'exécuter la suite
+          // Ajout d'un SKIP_DO ?
+          case PRINT:
+          case SKIP:
+          {
+            if (nexts[proc] == NULL) return;
 
-            new_do_s_break[proc] = new_do_s_break[proc]->next;
+            //On crée le nouvel état
+            program_state new_state = set_stmt(state, proc, nexts[proc]);
 
-            program_state *final_state = exec(new_state_break, next_s, new_do_s_break);
+            stmt **new_nexts = mod_stmts(nexts, proc, NULL);
 
-            if (final_state == NULL)
-                return NULL;
+            //On execute la suite
+            exec(new_state, new_nexts, stacks, guard_visited);
+          }
+          break;
 
-            ret_val[proc] = final_state[proc];
-            // if (ret_val[proc] == NULL) return NULL;
-        }
-        break;
-        case GUARD:
-        {
-            printf("guarded\n");
-            if (eval(state, s->expr))
-            {
-                printf("eval true\n");
-                program_state new_state_guard = set_stmt(state, proc, s->left);
-                program_state guard_state_guard = exec(new_state_guard, next_s, current_stack)[proc];
-                program_state next_state_guard = set_stmt(guard_state_guard, proc, current_stack[proc]->guard_s->s);
+          //On est dans le cas d'un SKIP_DO : on dépile le DO et on execute ce qui suit le DO
+          case SKIP_DO:
+          {
+            if (nexts[proc] == NULL) return;
 
-                do_stack **new_do_s_guard = malloc(proc_count * sizeof(struct do_stack *));
-                memcpy(new_do_s_guard, current_stack, proc_count * sizeof(struct do_stack *));
+            //On crée la pile sans la tête
+            do_stack **new_stacks = mod_stacks(stacks, proc, stacks[proc]->next);
 
-                new_do_s_guard[proc]->guard_s = current_stack[proc]->guard_s->next;
+            //On crée le nouvel état
+            program_state new_state = set_stmt(state, proc, nexts[proc]);
 
-                program_state *next_state = exec(next_state_guard, next_s, new_do_s_guard);
+            stmt **new_nexts = mod_stmts(nexts, proc, NULL);
 
-                if (next_state == NULL)
-                    ret_val[proc] = NULL;
-                else
-                    ret_val[proc] = next_state[proc];
-            }
+            //On execute la suite
+            exec(new_state, new_nexts, new_stacks, guard_visited);
+          }
 
-            printf("end guarded\n");
+          //On est dans le cas d'un BREAK : on execute ce qui suit le DO (le DO est suivi d'un SKIP_DO qui s'occupera de dépiler la do_stack)
+          case BREAK:
+          {
+              //On crée le nouvel état
+              program_state new_state = set_stmt(state, proc, stacks[proc]->break_s);
 
-            if (s->right != NULL)
-            {
-                printf("Oh, another guard!\n");
-                program_state new_state_guard = set_stmt(state, proc, s->right);
+              stmt **new_nexts = mod_stmts(nexts, proc, NULL);
 
-                program_state *next_state = exec(new_state_guard, next_s, current_stack);
+              //On execute la suite
+              exec(new_state, new_nexts, stacks, guard_visited);
+          }
+          break;
 
-                if (next_state == NULL)
-                    return NULL;
+          //On est dans le cas d'un GUARD : on regarde si le guard courant est vrai, si oui on l'execute
+          //Et on execute les autre guards si il y en a
+          case GUARD:
+          {
+              int guard_state;
+              //On regarde si le guard est valide
+              if (eval(state, s->expr))
+              {
+                  guard_state = 1;
 
-                ret_val[proc] = next_state[proc];
-            }
+                  //Si oui, on crée le nouvel état
+                  program_state new_state = set_stmt(state, proc, s->left);
 
-            if (ret_val[proc] == NULL)
-            {
-                program_state new_state_break = set_stmt(state, proc, current_stack[proc]->break_s);
-                do_stack **new_do_s_break = malloc(proc_count * sizeof(struct do_stack *));
-                memcpy(new_do_s_break, current_stack, proc_count * sizeof(struct do_stack *));
+                  //On execute le guard
+                  exec(new_state, nexts, stacks, guard_visited);
+              }
+              else
+              {
+                guard_state = 0;
+              }
 
-                new_do_s_break[proc] = new_do_s_break[proc]->next;
 
-                program_state *final_state = exec(new_state_break, next_s, new_do_s_break);
+              //On regarde si il y a d'autres guards
+              if (s->right != NULL)
+              {
+                  //On crée le nouvel état
+                  program_state new_state = set_stmt(state, proc, s->right);
 
-                if (final_state == NULL)
-                    return NULL;
+                  int *new_guard_visited = malloc(sizeof(int) * proc_count);
+                  memcpy(new_guard_visited, guard_visited, sizeof(int) * proc_count);
+                  new_guard_visited[proc] = guard_visited[proc] || guard_state;
 
-                ret_val[proc] = final_state[proc];
-            }
-            printf("end guard\n");
-        }
-        break;
+                  //On execute les guards
+                  exec(new_state, nexts, stacks, new_guard_visited);
+              }
+              else if (!guard_visited[proc])
+              {
+                printf("TODO");
+              }
+          }
+          break;
         }
     }
-    return ret_val;
 }
 
 /****************************************************************************/
