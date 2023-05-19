@@ -1,118 +1,44 @@
-%
-{
+%{
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "hash.c"
 #include "crc32.c"
-#include "memory.h"
-    int yylex();
+int yylex();
 
-    void yyerror(char *s)
-    {
-        fflush(stdout);
-        fprintf(stderr, "%s\n", s);
-    }
-
-    %
-}
-
-/****************************************************************************/
-
-/* types used by terminals and non-terminals */
-
-% union
+void yyerror(char *s)
 {
-    char *i;
-    expr *e;
-    stmt *s;
-    int n;
+    fflush(stdout);
+    fprintf(stderr, "%s\n", s);
 }
-
-    % type<e> expr % type<s> stmt assign guardlist
-
-    % token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT REACH GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR GT LT % token<i> IDENT % token<n> INT
-
-    % left ';' % left OR XOR % left AND % left MUL % left ADD SUB % right NOT EQUAL
-
-    % %
-
-    prog : global_vars
+typedef struct expr // boolean expression
 {
-    global_vars_names = current_vars_names;
-    current_vars_names = NULL;
-}
-proclist speclist
-    proc : PROC IDENT local_vars stmt END { add_proc($4); }
-proclist: { make_init_state(); }
-| proc proclist
+    int type; // INT, OR, AND, NOT, 0 (variable)
+    int var; // VAR index or INT constant
+    struct expr *left, *right;
+} expr;
 
-        local_vars : |
-                     VAR declist ';'
-
-                     global_vars : |
-                                   VAR declist ';' global_vars
-
-                                       declist : IDENT
+typedef struct stmt // command
 {
-    add_var($1);
-}
-| declist ',' IDENT { add_var($3); }
+    int type; // ASSIGN, ';', DO, IF, GUARD
+    int var;
+    expr *expr;
+    struct stmt *left, *right;
+} stmt;
 
-stmt : assign | stmt ';' stmt
+
+
+typedef struct speclist
 {
-    $$ = make_stmt(';', -1, NULL, $1, $3);
-}
-| DO guardlist OD
-{
-    $$ = make_stmt_end(DO, -1, NULL, $2, NULL);
-}
-| IF guardlist FI { $$ = make_stmt_end(IF, -1, NULL, $2, NULL); }
-| REACH expr
-{
-    $$ = make_stmt(REACH, -1, $2, NULL, NULL);
-}
-/* (int type, var *var, expr *expr,
-            stmt *left, stmt *right, )*/
-| SKIP { $$ = make_stmt(SKIP, -1, NULL, NULL, NULL); }
-| BREAK { $$ = make_stmt(BREAK, -1, NULL, NULL, NULL); }
+    int valid;
+    expr *expr;
+    struct speclist *next;
+} speclist;
 
-guardlist : GUARD expr ARROW stmt guardlist
-{
-    $$ = make_stmt(GUARD, -1, $2, $4, $5);
-}
-| GUARD expr ARROW stmt
-{
-    $$ = make_stmt(GUARD, -1, $2, $4, NULL);
-}
-
-assign : IDENT ASSIGN expr
-{
-    $$ = make_stmt(ASSIGN, find_ident($1), $3, NULL, NULL);
-}
-
-expr : IDENT { $$ = make_expr(0, find_ident($1), NULL, NULL); }
-| expr XOR expr { $$ = make_expr(XOR, -1, $1, $3); }
-| expr OR expr { $$ = make_expr(OR, -1, $1, $3); }
-| expr AND expr { $$ = make_expr(AND, -1, $1, $3); }
-| expr EQUAL expr { $$ = make_expr(EQUAL, -1, $1, $3); }
-| NOT expr { $$ = make_expr(NOT, -1, $2, NULL); }
-| '(' expr ')' { $$ = $2; }
-| ELSE { $$ = make_expr(ELSE, -1, NULL, NULL); }
-| expr ADD expr { $$ = make_expr(ADD, -1, $1, $3); }
-| expr SUB expr { $$ = make_expr(SUB, -1, $1, $3); }
-| expr MUL expr { $$ = make_expr(MUL, -1, $1, $3); }
-| expr GT expr { $$ = make_expr(GT, -1, $1, $3); }
-| expr LT expr { $$ = make_expr(LT, -1, $1, $3); }
-| INT { $$ = make_expr(INT, $1, NULL, NULL); }
-
-speclist : | REACH expr speclist { make_speclist($2); }
-
-% %
-
-#include "langlex.c"
-
-    typedef struct varlist // a variable list
+struct varlist;
+struct speclist;
+typedef struct el *program_state;
+typedef struct varlist // a variable list
 {
     char *name;
     int index;
@@ -214,10 +140,10 @@ stmt *make_stmt(int type, int var, expr *expr,
 // For DO and IF statements, we need to add a SKIP statement at the end
 // to make sure after to have a statement to execute after a break / a guard
 stmt *make_stmt_end(int type, int var, expr *expr,
-                    stmt *left, stmt *right)
+                    stmt *left, stmt *right, int end_type)
 {
     stmt *s = make_stmt(type, var, expr, left, right);
-    stmt *end = make_stmt(SKIP, -1, NULL, NULL, NULL);
+    stmt *end = make_stmt(end_type, -1, NULL, NULL, NULL);
     return make_stmt(';', -1, NULL, s, end);
 }
 struct el
@@ -237,6 +163,79 @@ void make_init_state()
     }
     init_state = state;
 }
+%}
+
+/****************************************************************************/
+
+/* types used by terminals and non-terminals */
+
+%union{
+    char *i;
+    expr *e;
+    stmt *s;
+    int n;
+}
+
+%type<e> expr 
+%type<s> stmt assign guardlist
+%token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT REACH GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR GT LT END_DO
+%token<i> IDENT 
+%token<n> INT
+%left ';' %left OR XOR %left AND %left MUL %left ADD SUB %right NOT EQUAL
+%%
+
+prog : global_vars {global_vars_names = current_vars_names; current_vars_names = NULL;}
+        proclist speclist
+proc : PROC IDENT local_vars stmt END { add_proc($4); }
+proclist: { make_init_state(); }
+    | proc proclist
+
+local_vars : 
+    |VAR declist ';'
+
+global_vars : 
+    |VAR declist ';' global_vars
+
+declist : IDENT {add_var($1);}
+    | declist ',' IDENT { add_var($3); }
+
+stmt : assign 
+| stmt ';' stmt {$$ = make_stmt(';', -1, NULL, $1, $3);}
+| DO guardlist OD {$$ = make_stmt_end(DO, -1, NULL, $2, NULL, END_DO);}
+| IF guardlist FI { $$ = make_stmt_end(IF, -1, NULL, $2, NULL, SKIP); }
+| REACH expr {$$ = make_stmt(REACH, -1, $2, NULL, NULL);}
+/* (int type, var *var, expr *expr,
+            stmt *left, stmt *right, )*/
+| SKIP { $$ = make_stmt(SKIP, -1, NULL, NULL, NULL); }
+| BREAK { $$ = make_stmt(BREAK, -1, NULL, NULL, NULL); }
+
+guardlist : GUARD expr ARROW stmt guardlist {$$ = make_stmt(GUARD, -1, $2, $4, $5);}
+| GUARD expr ARROW stmt {$$ = make_stmt(GUARD, -1, $2, $4, NULL);}
+
+assign : IDENT ASSIGN expr {$$ = make_stmt(ASSIGN, find_ident($1), $3, NULL, NULL);}
+
+expr : IDENT { $$ = make_expr(0, find_ident($1), NULL, NULL); }
+| expr XOR expr { $$ = make_expr(XOR, -1, $1, $3); }
+| expr OR expr { $$ = make_expr(OR, -1, $1, $3); }
+| expr AND expr { $$ = make_expr(AND, -1, $1, $3); }
+| expr EQUAL expr { $$ = make_expr(EQUAL, -1, $1, $3); }
+| NOT expr { $$ = make_expr(NOT, -1, $2, NULL); }
+| '(' expr ')' { $$ = $2; }
+| ELSE { $$ = make_expr(ELSE, -1, NULL, NULL); }
+| expr ADD expr { $$ = make_expr(ADD, -1, $1, $3); }
+| expr SUB expr { $$ = make_expr(SUB, -1, $1, $3); }
+| expr MUL expr { $$ = make_expr(MUL, -1, $1, $3); }
+| expr GT expr { $$ = make_expr(GT, -1, $1, $3); }
+| expr LT expr { $$ = make_expr(LT, -1, $1, $3); }
+| INT { $$ = make_expr(INT, $1, NULL, NULL); }
+
+speclist : | REACH expr speclist { make_speclist($2); }
+
+%%
+
+#include "langlex.c"
+
+
 
 int get_val(program_state state, int var)
 {
