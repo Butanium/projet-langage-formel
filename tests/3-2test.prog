@@ -1,0 +1,14 @@
+// oui
+var f0,f1,v,c,ga;
+// ça marche
+proc p0
+    c := 1;
+    v := 1;
+    do
+    :: c == 1 -> c := 2
+    od;
+    v := 2;
+    skip
+end
+
+reach c == 1 && v == 2
