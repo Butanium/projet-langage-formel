@@ -1,14 +1,15 @@
 
 all:
-	make clean bison/langlex.c bison/lang
+	make clean src/langlex.c src/lang
+	mv src/lang verif_spec
 clean:
-	rm -f bison/lang bison/langlex.c lang.tab.c lang.output 
-# Foreach file ./examples/*.prog, run the compiler. Break on error.
+	rm -f src/langlex.c lang.tab.c lang.output verif_spec
+# Foreach file ./tests/*.prog, run the compiler. Break on error.
 test:
 	make all
-	@for f in examples/*.prog; do \
+	@for f in tests/*.prog; do \
 		echo "Testing $$f"; \
-		./bison/lang $$f; \
+		./verif_spec  $$f; \
 		if [ $$? -ne 0 ]; then \
 			echo "Error in $$f"; \
 			break; \

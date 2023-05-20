@@ -623,7 +623,7 @@ int main(int argc, char **argv)
     while (specs != NULL)
     {
         i++;
-        printf("Spec %d: %d\n", i, specs->valid);
+        printf("Spec %d: %s\n", i, (specs->valid) ? "Satisfaite" : "Non satisfaite" );
         specs = specs->next;
     }
 }
