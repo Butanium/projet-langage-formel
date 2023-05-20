@@ -405,6 +405,7 @@ do_stack **mod_stacks(do_stack **arr, int proc, do_stack *s)
   return new_arr;
 }
 
+// Renvoie une copie du tableau arr avec la valeur s à l'indice proc
 int *mod_else_values(int *arr, int proc, int s)
 {
   int *new_arr = malloc(sizeof(int) * proc_count);
