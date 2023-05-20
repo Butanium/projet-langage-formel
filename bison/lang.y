@@ -11,60 +11,82 @@ void yyerror(char *s)
     fflush(stdout);
     fprintf(stderr, "%s\n", s);
 }
+
+// Une expression (retourne un entier)
 typedef struct expr // boolean expression
 {
-    int type; // INT, OR, AND, NOT, 0 (variable)
-    int var; // VAR index or INT constant
+    int type; //  OR AND EQUAL NOT ADD MUL SUB VAR GT LT, 0 (variable)
+    int var; // index d'une VAR dans l'env ou une constante INT 
     struct expr *left, *right;
 } expr;
 
+// Une instruction du programme
 typedef struct stmt // command
 {
-    int type; // ASSIGN, ';', DO, IF, GUARD
-    int var;
-    expr *expr;
+    int type; // ASSIGN, ';', DO, IF, GUARD, BREAK, SKIP, END_DO
+    int var; // L'index de la var pour ASSIGN
+    expr *expr; // L'expression pour ASSIGN, la condition pour GUARD, NULL sinon
     struct stmt *left, *right;
 } stmt;
 
 
-
+// Une liste de spécifications (reach)
 typedef struct speclist
 {
-    int valid;
-    expr *expr;
+    int valid; // 0 si la spécification n'est pas encore vérifiée, 1 sinon
+    expr *expr; // La spécification à vérifier
     struct speclist *next;
 } speclist;
 
-struct varlist;
-struct speclist;
-typedef struct el *program_state;
-typedef struct varlist // a variable list
+// Un état est l'ensemble des valeurs des variables et des instructions courantes des processeurs.
+// Pour pouvoir hasher et comparer en utilisant xcrc32, on a besoin que les variables et les 
+// instructions soient stockées dans une mémoire adjacente.
+// Afin de stocker les instructions courantes dans une mémoire adjacente aux valeurs des variables,
+// on utilise un tableau de "el", une structures qui peut contenir une valeur de variable et une instruction.
+struct el
 {
-    char *name;
-    int index;
+    int value;
+    stmt *stmt;
+};
+
+// Un état est donc un tableau de "el"
+typedef struct el *program_state;
+
+// Une liste de variables
+typedef struct varlist 
+{
+    char *name; // le nom de la variable
+    int index; // l'index de la variable dans l'environnement
     struct varlist *next;
 } varlist;
+
+// Une liste de processeurs
 typedef struct proclist
 {
-    struct stmt *proc;
+    struct stmt *proc; // Le corps du processeur
     struct proclist *next;
 } proclist;
 
 /****************************************************************************/
-/* All data pertaining to the programme are accessible from these two vars. */
-int proc_count;
-program_state init_state;
-int vars_count;
-varlist *global_vars_names;
-varlist *current_vars_names = NULL;
-proclist *program_procs = NULL; // liste de tous les processus
+/*               Données qui sont remplies pendant le pars                  */
+/****************************************************************************/
+int proc_count; // Nombre de processeurs dans le programme
+program_state init_state; // L'état initial du programme (variables = 0 et instruction courante des processeur = la première instruction)
+int vars_count; // Nombre de variables dans le programme, utilisé pour l'allocation de l'environnement
+varlist *global_vars_names; // Liste des variables globales du programme
+varlist *current_vars_names = NULL; // List des variables locales du processeur qui est en train d'être parsé
+proclist *program_procs = NULL; // Liste de tous les processus
 speclist *program_specs = NULL; // Liste de toutes les specifications
 wHash *hash;
 
 /****************************************************************************/
-/* Functions for setting up data structures at parse time.                 */
+/*         Fonctions pour remplir les données pendant le parsing            */
+/****************************************************************************/
+
+// Cherche l'index dans l'environement d'une variable.
 int find_ident(char *s)
 {
+    // Recherche dans l'environnement local
     varlist *v = current_vars_names;
     while (v && strcmp(v->name, s))
     {
@@ -72,6 +94,7 @@ int find_ident(char *s)
     }
     if (!v)
     {
+        // Si ce n'est pas trouvé, recherche dans l'environnement global
         v = global_vars_names;
         while (v && strcmp(v->name, s))
         {
@@ -86,6 +109,7 @@ int find_ident(char *s)
     return v->index;
 }
 
+// Ajoute la variable à l'environnement courant
 void add_var(char *s)
 {
     varlist *v = malloc(sizeof(varlist));
@@ -96,16 +120,19 @@ void add_var(char *s)
     current_vars_names = v;
 }
 
+// Ajout un nouveau processeur à la liste des processeurs
 void add_proc(stmt *proc)
 {
     proclist *p = malloc(sizeof(proclist));
     proc_count++;
+    // On réinitialise la liste des variables locales
     current_vars_names = NULL;
     p->proc = proc;
     p->next = program_procs;
     program_procs = p;
 }
 
+// Ajout une nouvelle spécification à la liste des spécifications
 void make_speclist(expr *exp)
 {
     speclist *s = malloc(sizeof(speclist));
@@ -115,6 +142,7 @@ void make_speclist(expr *exp)
     program_specs = s;
 }
 
+// Création d'une expression
 expr *make_expr(int type, int var, expr *left, expr *right)
 {
     expr *e = malloc(sizeof(expr));
@@ -125,6 +153,7 @@ expr *make_expr(int type, int var, expr *left, expr *right)
     return e;
 }
 
+// Création d'une instruction
 stmt *make_stmt(int type, int var, expr *expr,
                 stmt *left, stmt *right)
 {
@@ -137,8 +166,8 @@ stmt *make_stmt(int type, int var, expr *expr,
     return s;
 }
 
-// For DO and IF statements, we need to add a SKIP statement at the end
-// to make sure after to have a statement to execute after a break / a guard
+// Pour une instruction S, créer un stmt pour S;end_type avec end_type = END_DO (pour DO) ou SKIP (pour IF)
+// C'est pour s'assurer qu'il y ait toujours une instruction à exécuter après un break ou un guard
 stmt *make_stmt_end(int type, int var, expr *expr,
                     stmt *left, stmt *right, int end_type)
 {
@@ -146,18 +175,16 @@ stmt *make_stmt_end(int type, int var, expr *expr,
     stmt *end = make_stmt(end_type, -1, NULL, NULL, NULL);
     return make_stmt(';', -1, NULL, s, end);
 }
-struct el
-{
-    int value;
-    stmt *stmt;
-};
 
 void make_init_state()
 {
+    // On alloue un tableau de "el" de taille vars_count + proc_count
+    // L'utilisation de calloc permet d'initialiser toutes les valeurs à 0
     program_state state = calloc(vars_count + proc_count, sizeof(struct el));
     proclist *p = program_procs;
     for (int i = vars_count; i < vars_count + proc_count; i++)
     {
+        // On stocke les instructions courantes des processeurs dans le tableau
         state[i].stmt = p->proc;
         p = p->next;
     }
@@ -166,9 +193,8 @@ void make_init_state()
 %}
 
 /****************************************************************************/
-
-/* types used by terminals and non-terminals */
-
+/*          Types utilisés par les terminaux et les non-terminaux           */
+/****************************************************************************/
 %union{
     char *i;
     expr *e;
@@ -178,7 +204,7 @@ void make_init_state()
 
 %type<e> expr 
 %type<s> stmt assign guardlist
-%token DO OD ASSIGN IF ELSE FI PRINT OR AND EQUAL NOT REACH GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR GT LT END_DO
+%token DO OD ASSIGN IF ELSE FI OR AND EQUAL NOT REACH GUARD ARROW BREAK SKIP PROC END ADD MUL SUB VAR GT LT END_DO
 %token<i> IDENT 
 %token<n> INT
 %left ';' %left OR XOR %left AND %left MUL %left ADD SUB %right NOT EQUAL
@@ -200,48 +226,48 @@ declist : IDENT {add_var($1);}
     | declist ',' IDENT { add_var($3); }
 
 stmt : assign 
-| stmt ';' stmt {$$ = make_stmt(';', -1, NULL, $1, $3);}
-| DO guardlist OD {$$ = make_stmt_end(DO, -1, NULL, $2, NULL, END_DO);}
-| IF guardlist FI { $$ = make_stmt_end(IF, -1, NULL, $2, NULL, SKIP); }
-| REACH expr {$$ = make_stmt(REACH, -1, $2, NULL, NULL);}
-/* (int type, var *var, expr *expr,
-            stmt *left, stmt *right, )*/
-| SKIP { $$ = make_stmt(SKIP, -1, NULL, NULL, NULL); }
-| BREAK { $$ = make_stmt(BREAK, -1, NULL, NULL, NULL); }
+    | stmt ';' stmt {$$ = make_stmt(';', -1, NULL, $1, $3);}
+    | DO guardlist OD {$$ = make_stmt_end(DO, -1, NULL, $2, NULL, END_DO);}
+    | IF guardlist FI { $$ = make_stmt_end(IF, -1, NULL, $2, NULL, SKIP); }
+    | REACH expr {$$ = make_stmt(REACH, -1, $2, NULL, NULL);}
+    | SKIP { $$ = make_stmt(SKIP, -1, NULL, NULL, NULL); }
+    | BREAK { $$ = make_stmt(BREAK, -1, NULL, NULL, NULL); }
 
 guardlist : GUARD expr ARROW stmt guardlist {$$ = make_stmt(GUARD, -1, $2, $4, $5);}
-| GUARD expr ARROW stmt {$$ = make_stmt(GUARD, -1, $2, $4, NULL);}
+    | GUARD expr ARROW stmt {$$ = make_stmt(GUARD, -1, $2, $4, NULL);}
 
 assign : IDENT ASSIGN expr {$$ = make_stmt(ASSIGN, find_ident($1), $3, NULL, NULL);}
 
 expr : IDENT { $$ = make_expr(0, find_ident($1), NULL, NULL); }
-| expr XOR expr { $$ = make_expr(XOR, -1, $1, $3); }
-| expr OR expr { $$ = make_expr(OR, -1, $1, $3); }
-| expr AND expr { $$ = make_expr(AND, -1, $1, $3); }
-| expr EQUAL expr { $$ = make_expr(EQUAL, -1, $1, $3); }
-| NOT expr { $$ = make_expr(NOT, -1, $2, NULL); }
-| '(' expr ')' { $$ = $2; }
-| ELSE { $$ = make_expr(ELSE, -1, NULL, NULL); }
-| expr ADD expr { $$ = make_expr(ADD, -1, $1, $3); }
-| expr SUB expr { $$ = make_expr(SUB, -1, $1, $3); }
-| expr MUL expr { $$ = make_expr(MUL, -1, $1, $3); }
-| expr GT expr { $$ = make_expr(GT, -1, $1, $3); }
-| expr LT expr { $$ = make_expr(LT, -1, $1, $3); }
-| INT { $$ = make_expr(INT, $1, NULL, NULL); }
+    | expr XOR expr { $$ = make_expr(XOR, -1, $1, $3); }
+    | expr OR expr { $$ = make_expr(OR, -1, $1, $3); }
+    | expr AND expr { $$ = make_expr(AND, -1, $1, $3); }
+    | expr EQUAL expr { $$ = make_expr(EQUAL, -1, $1, $3); }
+    | NOT expr { $$ = make_expr(NOT, -1, $2, NULL); }
+    | '(' expr ')' { $$ = $2; }
+    | ELSE { $$ = make_expr(ELSE, -1, NULL, NULL); }
+    | expr ADD expr { $$ = make_expr(ADD, -1, $1, $3); }
+    | expr SUB expr { $$ = make_expr(SUB, -1, $1, $3); }
+    | expr MUL expr { $$ = make_expr(MUL, -1, $1, $3); }
+    | expr GT expr { $$ = make_expr(GT, -1, $1, $3); }
+    | expr LT expr { $$ = make_expr(LT, -1, $1, $3); }
+    | INT { $$ = make_expr(INT, $1, NULL, NULL); }
 
-speclist : | REACH expr speclist { make_speclist($2); }
+speclist : 
+    | REACH expr speclist { make_speclist($2); }
 
 %%
 
 #include "langlex.c"
 
 
-
+// Renvoie la valeur de la variable var dans l'état state
 int get_val(program_state state, int var)
 {
     return state[var].value;
 }
 
+// Créer un nouvel état à partir de l'état state en changeant la valeur de la variable var à val
 program_state set_val(program_state state, int var, int val)
 {
     program_state new_state = malloc(sizeof(struct el) * (vars_count + proc_count));
@@ -250,11 +276,13 @@ program_state set_val(program_state state, int var, int val)
     return new_state;
 }
 
+// Renvoie l'instruction courante du processeur proc dans l'état state
 stmt *get_stmt(program_state state, int proc)
 {
     return state[vars_count + proc].stmt;
 }
 
+// Créer un nouvel état à partir de l'état state en changeant l'instruction courante du processeur proc à stmt
 program_state set_stmt(program_state state, int proc, stmt *stmt)
 {
     program_state new_state = malloc(sizeof(struct el) * (vars_count + proc_count));
@@ -264,7 +292,10 @@ program_state set_stmt(program_state state, int proc, stmt *stmt)
 }
 
 /****************************************************************************/
-/* hash table for states      :                                            */
+/*                     Hashtable pour les program_state                     */
+/****************************************************************************/
+
+// Créer un élément de la hashtable pour un program_state
 wState *make_wstate(program_state state)
 {
     wState *wstate = malloc(sizeof(struct wState));
@@ -273,14 +304,17 @@ wState *make_wstate(program_state state)
     return wstate;
 }
 
+// Compare deux éléments de la hashtable
 int cmp_wstate(wState *state1, wState *state2)
 {
     return memcmp(state1->memory, state2->memory, sizeof(struct el) * (vars_count + proc_count));
 }
 
 /****************************************************************************/
-/* programme interpreter      :                                             */
+/*                    Exploration des états atteignables                    */
+/****************************************************************************/
 
+// Evaluation d'une expression
 int eval(program_state state, expr *e, int else_value)
 {
     switch (e->type)
@@ -312,6 +346,7 @@ int eval(program_state state, expr *e, int else_value)
     }
 }
 
+// Evalue toutes les spécifications pour l'état state et valide celles qui sont vérifiées dans l'état state
 void valid_specs(program_state state)
 {
     speclist *s = program_specs;
@@ -322,6 +357,8 @@ void valid_specs(program_state state)
     }
 }
 
+// Sauvegarde l'état state dans la hashtable
+// Renvoie 1 si l'état n'était pas déjà dans la hashtable, 0 sinon
 int save_state(program_state state)
 {
     wState *wstate = make_wstate(state);
@@ -332,8 +369,6 @@ int save_state(program_state state)
 
     return 1;
 }
-int execcount;
-
 
 
 // Pile pour les environnements DO
@@ -471,9 +506,7 @@ void exec(program_state state, stmt **nexts, do_stack **stacks, int *else_values
           }
           break;
 
-          // On est dans un PRINT ou dans un SKIP : on continue juste d'exécuter la suite
-          // Ajout d'un SKIP_DO ?
-          case PRINT:
+          // On est dans un SKIP : on continue juste d'exécuter la suite
           case SKIP:
           {
             if (nexts[proc] == NULL) return;
